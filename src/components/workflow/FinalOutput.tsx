@@ -13,48 +13,48 @@ interface FinalOutputProps {
 }
 
 export function FinalOutput({ article }: FinalOutputProps) {
-  const { setPhase } = useArticleStore();
+  const { setPhase, setStyleAnalysis } = useArticleStore();
   const { addInsight, insights } = useStyleMemoryStore();
   const provider = useSettingsStore((s) => s.provider);
   const router = useRouter();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analyzed, setAnalyzed] = useState(false);
-  const [isDiffMode, setIsDiffMode] = useState(false);
-  const [changes, setChanges] = useState<{ type: string; ai: string; user: string }[]>([]);
-  const [result, setResult] = useState<{
-    vocabProfile?: string;
-    toneProfile?: string;
-    rhythmProfile?: string;
-    vocabInsight?: string;
-    toneInsight?: string;
-    rhythmInsight?: string;
-    signaturePhrases: string;
-    antiPatterns: string;
-    summary: string;
-  } | null>(null);
   const [error, setError] = useState('');
 
   const wordCount = article.content.replace(/<[^>]*>/g, '').length;
   const hasAiDraft = article.aiDraft && article.aiDraft.length > 0;
 
-  // 进入 Phase 8 时自动分析
+  // 已有缓存分析结果 → 直接使用；否则触发分析
+  const cached = article.styleAnalysis;
+
   useEffect(() => {
-    if (article.currentPhase === 8 && !analyzed && !isAnalyzing && !result) {
+    if (article.currentPhase === 8 && !cached && !isAnalyzing) {
       runAnalysis();
     }
-  }, [article.currentPhase, analyzed, isAnalyzing, result]);
+  }, [article.currentPhase, cached, isAnalyzing]);
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (force = false) => {
     setIsAnalyzing(true);
     setError('');
 
+    // 强制重新分析时，先清除已缓存的结果
+    if (force && cached) {
+      setStyleAnalysis(article.id, null);
+    }
+
     try {
-      // 有 AI 初稿 → 对比分析；没有 → 全文分析
+      // 构建已有风格上下文，让 AI 在此基础上深化
+      const recentInsights = insights.slice(-3);
+      const existingStyle = recentInsights.length > 0
+        ? recentInsights.map((i) =>
+            `[${i.articleTitle}] 用词:${i.vocabProfile} 语气:${i.toneProfile} 节奏:${i.rhythmProfile} 标志:${i.signaturePhrases} 禁用:${i.antiPatterns}`
+          ).join('\n')
+        : undefined;
+
       const action = hasAiDiff() ? 'analyze-diff' : 'analyze-style';
       const payload = hasAiDiff()
-        ? { action: 'analyze-diff', data: { aiDraft: article.aiDraft, userVersion: article.content, title: article.title || '未命名' } }
-        : { action: 'analyze-style', data: { content: article.content, title: article.title || '未命名' } };
+        ? { action: 'analyze-diff', data: { aiDraft: article.aiDraft, userVersion: article.content, title: article.title || '未命名', existingStyle } }
+        : { action: 'analyze-style', data: { content: article.content, title: article.title || '未命名', existingStyle } };
 
       const res = await fetch('/api/ai', {
         method: 'POST',
@@ -69,19 +69,11 @@ export function FinalOutput({ article }: FinalOutputProps) {
 
       const data = await res.json();
 
-      if (action === 'analyze-diff') {
-        setIsDiffMode(true);
-        setChanges(data.changes ?? []);
-      }
-
-      setResult(data);
-
-      // 存入记忆
-      const insight: StyleInsight = {
-        id: nanoid(),
-        articleId: article.id,
-        articleTitle: article.title || '未命名',
+      // 构建分析结果
+      const analysisResult = {
         analyzedAt: new Date().toISOString(),
+        isDiffMode: action === 'analyze-diff',
+        changes: data.changes ?? [],
         vocabProfile: data.vocabInsight ?? data.vocabProfile ?? '',
         toneProfile: data.toneInsight ?? data.toneProfile ?? '',
         rhythmProfile: data.rhythmInsight ?? data.rhythmProfile ?? '',
@@ -89,8 +81,24 @@ export function FinalOutput({ article }: FinalOutputProps) {
         antiPatterns: data.antiPatterns ?? '',
         summary: data.summary ?? '',
       };
+
+      // 持久化到文章（通过 debouncedSync 落盘）
+      setStyleAnalysis(article.id, analysisResult);
+
+      // 同时写入全局风格记忆
+      const insight: StyleInsight = {
+        id: nanoid(),
+        articleId: article.id,
+        articleTitle: article.title || '未命名',
+        analyzedAt: analysisResult.analyzedAt,
+        vocabProfile: analysisResult.vocabProfile,
+        toneProfile: analysisResult.toneProfile,
+        rhythmProfile: analysisResult.rhythmProfile,
+        signaturePhrases: analysisResult.signaturePhrases,
+        antiPatterns: analysisResult.antiPatterns,
+        summary: analysisResult.summary,
+      };
       addInsight(insight);
-      setAnalyzed(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '风格分析失败');
     } finally {
@@ -170,17 +178,25 @@ export function FinalOutput({ article }: FinalOutputProps) {
       <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">
-            {isDiffMode ? '对比学习' : '风格学习'}
+            {cached?.isDiffMode ? '对比学习' : '风格学习'}
           </h3>
           <div className="flex items-center gap-2">
-            {isDiffMode && analyzed && (
+            {cached?.isDiffMode && cached && (
               <span className="text-xs text-blue-600">AI初稿 vs 你的修改</span>
             )}
             {isAnalyzing && (
               <span className="text-xs text-blue-600 animate-pulse">分析中...</span>
             )}
-            {analyzed && (
+            {cached && !isAnalyzing && (
               <span className="text-xs text-green-600">✓ 已记住</span>
+            )}
+            {!isAnalyzing && (
+              <button
+                onClick={() => runAnalysis(true)}
+                className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:underline"
+              >
+                重新分析
+              </button>
             )}
           </div>
         </div>
@@ -196,23 +212,23 @@ export function FinalOutput({ article }: FinalOutputProps) {
         {error && (
           <div className="flex items-center justify-between">
             <p className="text-xs text-red-500">{error}</p>
-            <button onClick={runAnalysis} className="text-xs text-blue-600 hover:underline">
+            <button onClick={() => runAnalysis(true)} className="text-xs text-blue-600 hover:underline">
               重试
             </button>
           </div>
         )}
 
-        {result && (
+        {cached && (
           <div className="space-y-3">
             <div className="rounded bg-blue-50 border border-blue-100 p-2">
-              <p className="text-xs text-blue-900 font-medium">{result.summary}</p>
+              <p className="text-xs text-blue-900 font-medium">{cached.summary}</p>
             </div>
 
             {/* 对比模式：展示具体修改 */}
-            {isDiffMode && changes.length > 0 && (
+            {cached.isDiffMode && cached.changes.length > 0 && (
               <div className="space-y-1.5">
                 <span className="text-xs text-[var(--muted-foreground)] font-medium">你的修改</span>
-                {changes.map((c, i) => (
+                {cached.changes.map((c, i) => (
                   <div key={i} className="text-xs border-l-2 pl-2 border-blue-300">
                     {c.type === 'replace' && (
                       <>
@@ -235,23 +251,23 @@ export function FinalOutput({ article }: FinalOutputProps) {
             <div className="space-y-2 text-xs">
               <div>
                 <span className="text-[var(--muted-foreground)] font-medium">用词</span>
-                <p className="text-[var(--foreground)] mt-0.5">{result.vocabInsight ?? result.vocabProfile}</p>
+                <p className="text-[var(--foreground)] mt-0.5">{cached.vocabProfile}</p>
               </div>
               <div>
                 <span className="text-[var(--muted-foreground)] font-medium">语气</span>
-                <p className="text-[var(--foreground)] mt-0.5">{result.toneInsight ?? result.toneProfile}</p>
+                <p className="text-[var(--foreground)] mt-0.5">{cached.toneProfile}</p>
               </div>
               <div>
                 <span className="text-[var(--muted-foreground)] font-medium">节奏</span>
-                <p className="text-[var(--foreground)] mt-0.5">{result.rhythmInsight ?? result.rhythmProfile}</p>
+                <p className="text-[var(--foreground)] mt-0.5">{cached.rhythmProfile}</p>
               </div>
             </div>
 
-            {result.signaturePhrases && (
+            {cached.signaturePhrases && (
               <div className="text-xs">
                 <span className="text-[var(--muted-foreground)] font-medium">标志表达</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {result.signaturePhrases.split('、').map((p: string, i: number) => (
+                  {cached.signaturePhrases.split('、').map((p: string, i: number) => (
                     <span key={i} className="rounded-full bg-[var(--muted)] px-2 py-0.5 text-[var(--foreground)]">
                       {p}
                     </span>
@@ -260,16 +276,16 @@ export function FinalOutput({ article }: FinalOutputProps) {
               </div>
             )}
 
-            {result.antiPatterns && (
+            {cached.antiPatterns && (
               <div className="text-xs">
                 <span className="text-[var(--muted-foreground)] font-medium">不用什么</span>
-                <p className="text-red-500 mt-0.5">{result.antiPatterns}</p>
+                <p className="text-red-500 mt-0.5">{cached.antiPatterns}</p>
               </div>
             )}
           </div>
         )}
 
-        {analyzed && (
+        {cached && (
           <p className="text-xs text-[var(--muted-foreground)]">
             已累计学习 {insights.length} 篇文章的风格。下次写作时 AI 会参考这些风格记忆。
           </p>

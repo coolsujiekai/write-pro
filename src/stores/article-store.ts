@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Article, Material, InterviewEntry, ThemeConfirmation, StructurePlan, Platform, PhaseId } from '@/lib/workflow/types';
+import type { Article, Material, InterviewEntry, ThemeConfirmation, StructurePlan, Platform, PhaseId, StyleAnalysisResult } from '@/lib/workflow/types';
 import { nanoid } from 'nanoid';
 
 interface ArticleState {
@@ -22,6 +22,7 @@ interface ArticleState {
   setTheme: (articleId: string, theme: ThemeConfirmation) => void;
   setStructure: (articleId: string, structure: StructurePlan) => void;
   setAiDraft: (id: string, aiDraft: string) => void;
+  setStyleAnalysis: (id: string, analysis: StyleAnalysisResult | null) => void;
 
   loadFromServer: () => Promise<void>;
   deleteArticle: (id: string) => void;
@@ -34,6 +35,7 @@ function createDefaultArticle(): Article {
     title: '',
     content: '',
     aiDraft: '',
+    styleAnalysis: null,
     currentPhase: 1,
     platform: 'wechat',
     status: 'draft',
@@ -278,6 +280,22 @@ export const useArticleStore = create<ArticleState>()(
             currentArticle:
               state.currentArticle?.id === id
                 ? { ...state.currentArticle, aiDraft, updatedAt: new Date() }
+                : state.currentArticle,
+          };
+        });
+      },
+
+      setStyleAnalysis: (id, analysis) => {
+        set((state) => {
+          const articles = state.articles.map((a) =>
+            a.id === id ? { ...a, styleAnalysis: analysis, updatedAt: new Date() } : a
+          );
+          debouncedSync(articles);
+          return {
+            articles,
+            currentArticle:
+              state.currentArticle?.id === id
+                ? { ...state.currentArticle, styleAnalysis: analysis, updatedAt: new Date() }
                 : state.currentArticle,
           };
         });

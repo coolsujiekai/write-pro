@@ -1,6 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chat, type AIProvider } from '@/lib/ai/client';
 
+/** 从 AI 返回文本中鲁棒提取 JSON 对象 */
+function extractJson(text: string): Record<string, unknown> | null {
+  // 1. 去掉 markdown 代码块
+  let cleaned = text.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+  }
+
+  // 2. 找到第一个 { 和最后一个 }，截取 JSON 对象
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+
+  // 3. 替换中文引号为标准双引号
+  cleaned = cleaned.replace(/[""]/g, '"').replace(/['']/g, "'");
+
+  // 4. 去掉尾逗号（, } 或 , ]）
+  cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
+
+  // 5. 尝试解析
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -258,10 +288,15 @@ ${platformHint}
   return NextResponse.json({ draft: response.content });
 }
 
-async function handleAnalyzeStyle(data: { content: string; title: string }, provider?: AIProvider) {
-  const { content, title } = data;
+async function handleAnalyzeStyle(data: { content: string; title: string; existingStyle?: string }, provider?: AIProvider) {
+  const { content, title, existingStyle } = data;
+
+  const contextBlock = existingStyle
+    ? `\n\n已有风格记忆（在此基础上更新、深化，保留有价值的旧观察，补充新发现）：\n${existingStyle}`
+    : '';
 
   const system = `你是一位写作风格分析师。你的任务是从文章中精准提取作者的用词、语气、节奏特征，让另一个 AI 能模仿这个风格写作。
+${contextBlock}
 
 分析维度：
 
@@ -317,30 +352,30 @@ async function handleAnalyzeStyle(data: { content: string; title: string }, prov
     provider,
   });
 
-  try {
-    // 处理 AI 返回的 markdown 代码块包裹的 JSON
-    let text = response.content.trim();
-    if (text.startsWith('```')) {
-      text = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-    }
-    const result = JSON.parse(text);
+  const result = extractJson(response.content);
+  if (result) {
     return NextResponse.json(result);
-  } catch {
-    return NextResponse.json({
-      vocabProfile: '未能解析',
-      toneProfile: '未能解析',
-      rhythmProfile: '未能解析',
-      signaturePhrases: '',
-      antiPatterns: '',
-      summary: response.content.slice(0, 100),
-    });
   }
+
+  return NextResponse.json({
+    vocabProfile: '未能解析',
+    toneProfile: '未能解析',
+    rhythmProfile: '未能解析',
+    signaturePhrases: '',
+    antiPatterns: '',
+    summary: response.content.slice(0, 100),
+  });
 }
 
-async function handleAnalyzeDiff(data: { aiDraft: string; userVersion: string; title: string }, provider?: AIProvider) {
-  const { aiDraft, userVersion, title } = data;
+async function handleAnalyzeDiff(data: { aiDraft: string; userVersion: string; title: string; existingStyle?: string }, provider?: AIProvider) {
+  const { aiDraft, userVersion, title, existingStyle } = data;
+
+  const contextBlock = existingStyle
+    ? `\n\n已有风格记忆（在此基础上更新、深化，保留有价值的旧观察，补充新发现）：\n${existingStyle}`
+    : '';
 
   const system = `你是一位写作风格分析师。你的任务是对比 AI 初稿和用户修改后的版本，找出用户改了什么，从而精准提炼用户的写作风格。
+${contextBlock}
 
 分析方法：
 1. 逐段对比，找出用户修改的具体词句
@@ -379,22 +414,18 @@ async function handleAnalyzeDiff(data: { aiDraft: string; userVersion: string; t
     provider,
   });
 
-  try {
-    let text = response.content.trim();
-    if (text.startsWith('```')) {
-      text = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-    }
-    const result = JSON.parse(text);
+  const result = extractJson(response.content);
+  if (result) {
     return NextResponse.json(result);
-  } catch {
-    return NextResponse.json({
-      changes: [],
-      vocabInsight: '未能解析',
-      toneInsight: '未能解析',
-      rhythmInsight: '未能解析',
-      signaturePhrases: '',
-      antiPatterns: '',
-      summary: response.content.slice(0, 100),
-    });
   }
+
+  return NextResponse.json({
+    changes: [],
+    vocabInsight: '未能解析',
+    toneInsight: '未能解析',
+    rhythmInsight: '未能解析',
+    signaturePhrases: '',
+    antiPatterns: '',
+    summary: response.content.slice(0, 100),
+  });
 }

@@ -58,6 +58,9 @@ export interface StyleMemory {
   learnedAt: Date;
 }
 
+import type { StyleAnalysisResult } from './style-types';
+export type { StyleAnalysisResult };
+
 export interface Article {
   id: string;
   title: string;
@@ -70,6 +73,7 @@ export interface Article {
   interviews: InterviewEntry[];
   theme: ThemeConfirmation | null;
   structure: StructurePlan | null;
+  styleAnalysis: StyleAnalysisResult | null;
   createdAt: Date;
   updatedAt: Date;
 }

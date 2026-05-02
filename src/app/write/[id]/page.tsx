@@ -1,6 +1,7 @@
 'use client';
 
 import { useArticleStore } from '@/stores/article-store';
+import { useStyleMemoryStore } from '@/stores/style-memory-store';
 import { useRouter, useParams } from 'next/navigation';
 import { TiptapEditor } from '@/components/editor/TiptapEditor';
 import { WorkflowPanel } from '@/components/workflow/WorkflowPanel';
@@ -12,13 +13,15 @@ export default function WritePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { articles, currentArticle, setCurrentArticle, updateContent, updateTitle, setPlatform } = useArticleStore();
+  const { loadFromServer: loadStyleMemory } = useStyleMemoryStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (!currentArticle || currentArticle.id !== id) {
       setCurrentArticle(id);
     }
-  }, [id, currentArticle, setCurrentArticle]);
+    loadStyleMemory();
+  }, [id, currentArticle, setCurrentArticle, loadStyleMemory]);
 
   const article = articles.find((a) => a.id === id);
 

@@ -2,27 +2,27 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-
-export interface StyleInsight {
-  id: string;
-  articleId: string;
-  articleTitle: string;
-  analyzedAt: string;
-  // 核心三维
-  vocabProfile: string;    // 用词画像：偏口语/书面、爱用哪类词、避用哪类词
-  toneProfile: string;     // 语气画像：冷/暖、硬/柔、正式/随意、有没有口头禅
-  rhythmProfile: string;   // 节奏画像：长短句比例、段落密度、停顿习惯
-  // 辅助
-  signaturePhrases: string; // 标志性表达：这个作者反复用的词句或句式
-  antiPatterns: string;     // 作者不用什么：绝对不会出现的表达
-  summary: string;          // 一句话风格标签
-}
+import type { StyleInsight } from '@/lib/workflow/style-types';
+export type { StyleInsight };
 
 interface StyleMemoryState {
   insights: StyleInsight[];
   addInsight: (insight: StyleInsight) => void;
   getLatestInsights: (count?: number) => StyleInsight[];
   getStylePrompt: () => string;
+  loadFromServer: () => Promise<void>;
+}
+
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+function debouncedSync(insights: StyleInsight[]) {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    fetch('/api/style-memory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ insights }),
+    }).catch(() => { /* silent */ });
+  }, 1000);
 }
 
 export const useStyleMemoryStore = create<StyleMemoryState>()(
@@ -31,9 +31,13 @@ export const useStyleMemoryStore = create<StyleMemoryState>()(
       insights: [],
 
       addInsight: (insight) => {
-        set((state) => ({
-          insights: [...state.insights, insight],
-        }));
+        set((state) => {
+          // 同一篇文章不重复添加
+          const filtered = state.insights.filter((i) => i.articleId !== insight.articleId);
+          const next = [...filtered, insight];
+          debouncedSync(next);
+          return { insights: next };
+        });
       },
 
       getLatestInsights: (count = 3) => {
@@ -79,6 +83,37 @@ ${sections.join('\n')}
 - 用词、语气、节奏必须匹配上面的画像
 - 适当使用标志表达，但不要堆砌
 - 绝对禁止使用上面列出的禁止表达`;
+      },
+
+      loadFromServer: async () => {
+        try {
+          const res = await fetch('/api/style-memory');
+          if (!res.ok) return;
+          const serverInsights: StyleInsight[] = await res.json();
+          if (!Array.isArray(serverInsights) || serverInsights.length === 0) return;
+
+          const local = get().insights;
+
+          // 合并：按 articleId 去重，取更新的
+          const merged = new Map<string, StyleInsight>();
+          for (const item of local) {
+            merged.set(item.articleId, item);
+          }
+          for (const item of serverInsights) {
+            const existing = merged.get(item.articleId);
+            if (!existing || new Date(item.analyzedAt).getTime() > new Date(existing.analyzedAt).getTime()) {
+              merged.set(item.articleId, item);
+            }
+          }
+
+          const next = [...merged.values()].sort(
+            (a, b) => new Date(a.analyzedAt).getTime() - new Date(b.analyzedAt).getTime()
+          );
+
+          set({ insights: next });
+        } catch {
+          // 服务端不可用时用 localStorage 数据
+        }
       },
     }),
     {

@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
+import type { StyleAnalysisResult } from '@/lib/workflow/style-types';
+
 export interface StoredArticle {
   id: string;
   title: string;
@@ -12,6 +14,7 @@ export interface StoredArticle {
   interviews: { id: string; round: number; question: string; answer: string; createdAt: string }[];
   theme: { oneSentence: string; readerValue: string; coreMessage: string } | null;
   structure: unknown;
+  styleAnalysis: StyleAnalysisResult | null;
   createdAt: string;
   updatedAt: string;
 }

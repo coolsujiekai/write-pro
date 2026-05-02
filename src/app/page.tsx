@@ -1,6 +1,7 @@
 'use client';
 
 import { useArticleStore } from '@/stores/article-store';
+import { useStyleMemoryStore } from '@/stores/style-memory-store';
 import { useRouter } from 'next/navigation';
 import { PHASES } from '@/lib/workflow/types';
 import { useState, useEffect } from 'react';
@@ -9,13 +10,15 @@ import type { Article } from '@/lib/workflow/types';
 
 export default function HomePage() {
   const { articles, createArticle, loadFromServer, deleteArticle } = useArticleStore();
+  const { loadFromServer: loadStyleMemory } = useStyleMemoryStore();
   const router = useRouter();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   useEffect(() => {
     loadFromServer();
-  }, [loadFromServer]);
+    loadStyleMemory();
+  }, [loadFromServer, loadStyleMemory]);
 
   const handleCreate = () => {
     const article = createArticle();
