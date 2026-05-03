@@ -3,6 +3,7 @@ import { chat, type AIProvider } from '@/lib/ai/client';
 import { extractJson } from '@/lib/ai/extract-json';
 import { logger } from '@/lib/logger';
 import { getSharedWritingRules } from '@/lib/skill/prompt-loader';
+import { getMaxTokens } from '@/lib/ai/token-utils';
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -81,7 +82,7 @@ async function handleInterview(data: { materials: string[]; previousAnswers: str
     messages: [
       { role: 'user', content: `请根据以下信息，问一个最能挖掘故事的问题。${materialsText}${previousText}` },
     ],
-    maxTokens: 500,
+    maxTokens: getMaxTokens('interview', ''),
     tier: 'light',
     provider,
   });
@@ -111,7 +112,7 @@ async function handleSuggestTheme(data: { materials: string[]; interviews: { q: 
         content: `素材：\n${materials.join('\n---\n')}\n\n采访记录：\n${interviewText}\n\n请确定文章主题。`,
       },
     ],
-    maxTokens: 800,
+    maxTokens: getMaxTokens('suggest-theme', ''),
     tier: 'light',
     provider,
   });
@@ -174,7 +175,7 @@ ${structure}
 请生成初稿。`,
       },
     ],
-    maxTokens: 4000,
+    maxTokens: getMaxTokens('generate-draft', 0, platform),
     tier: 'standard',
     provider,
   });
@@ -201,7 +202,7 @@ async function handleCheckAI(data: { content: string }, provider?: AIProvider) {
     messages: [
       { role: 'user', content: `请检查以下文章：\n\n${content}` },
     ],
-    maxTokens: 2000,
+    maxTokens: getMaxTokens('check-ai', content),
     tier: 'light',
     provider,
   });
@@ -229,7 +230,7 @@ async function handleRewrite(data: { content: string; instruction: string }, pro
     messages: [
       { role: 'user', content: `原文：\n${content}\n\n修改指令：${instruction}` },
     ],
-    maxTokens: 4000,
+    maxTokens: getMaxTokens('rewrite', content),
     tier: 'standard',
     provider,
   });
@@ -246,35 +247,48 @@ async function handlePolishDraft(data: { content: string; platform: string }, pr
       ? '这是公众号文章，保持短段落和金句。'
       : '';
 
-  const system = `你是一位资深编辑，专门去除文章的 AI 味道。
+  const system = `你是一位资深编辑，专门打磨文章。请用以下 4 个视角依次审视文章，每次发现问题就修改，直到通过全部视角：
 
-你的任务：
-1. 找出文章中所有不自然的 AI 表达
-2. 直接修改文章，不要只列问题
-3. 修改后的文章必须保持原文的结构、观点和信息量
-4. 让文章读起来像一个真人在说话
+## 视角 1：读者视角
+- 普通读者能理解吗？有没有看不懂的术语？
+- 有兴趣读下去吗？开头能抓住人吗？
+- 有共鸣吗？读完后有收获感吗？
 
-修改规则：
-- "首先...其次...最后..." → 改成自然过渡
-- "值得一提的是" → 直接删掉，换自然衔接
-- "在这个快节奏的时代" → 换成具体场景
-- "综上所述" → 直接删掉
-- "不可否认" → 删掉
-- "众所周知" → 删掉或换成具体事实
-- 过于工整的排比句 → 打散，长短不一
-- 太抽象的表达 → 换成具体画面
-- 一句话超过 30 个字 → 拆成短句
-- 保持作者的语气，不要改成你的风格
-${platformHint}
+## 视角 2：编辑视角
+- 结构清晰吗？有没有跑题的部分？
+- 节奏舒服吗？段落长度合适吗？
+- 有没有废话？有没有重复的句子？
 
-直接输出修改后的完整文章，不要加任何说明、不要加前后缀。标题用 # 标记。`;
+## 视角 3：风格视角
+- 像真人说话吗？有没有 AI 味？
+- 语气一致吗？会不会忽冷忽热？
+- 检查以下 AI 味表达逐个替换：
+  "首先...其次...最后..." → 自然过渡
+  "值得一提的是" → 删掉
+  "在这个快节奏的时代" → 具体场景
+  "综上所述" → 删掉
+  "不可否认" → 删掉
+  "众所周知" → 删掉
+  "不禁让人" → 具体感受
+- 过于工整的排比句 → 打散
+- 太抽象的表达 → 具体画面
+- 超过 30 字的句子 → 拆短
+
+## 视角 4：平台视角
+${platformHint || '按通用文章标准处理。'}
+
+规则：
+- 保持原文的结构、观点和信息量
+- 保持作者的语气和风格
+- 直接输出修改后的完整文章，不要任何说明，不要前后缀
+- 标题用 # 标记`;
 
   const response = await chat({
     system,
     messages: [
-      { role: 'user', content: `请修改以下文章：\n\n${content}` },
+      { role: 'user', content: `请打磨以下文章：\n\n${content}` },
     ],
-    maxTokens: 4000,
+    maxTokens: getMaxTokens('polish-draft', content.length),
     tier: 'standard',
     provider,
   });
@@ -342,7 +356,7 @@ ${contextBlock}
     messages: [
       { role: 'user', content: `请分析以下文章的写作风格：\n\n标题：${title}\n\n${plainText}` },
     ],
-    maxTokens: 3000,
+    maxTokens: getMaxTokens('analyze-style', content),
     tier: 'standard',
     provider,
   });
@@ -405,7 +419,7 @@ ${contextBlock}
     messages: [
       { role: 'user', content: `标题：${title}\n\n## AI 初稿\n${aiPlain}\n\n## 用户修改后\n${userPlain}` },
     ],
-    maxTokens: 3000,
+    maxTokens: getMaxTokens('analyze-diff', aiDraft + userVersion),
     tier: 'standard',
     provider,
   });

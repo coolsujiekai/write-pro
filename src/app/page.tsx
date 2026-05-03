@@ -4,7 +4,7 @@ import { useArticleStore } from '@/stores/article-store';
 import { useStyleMemoryStore } from '@/stores/style-memory-store';
 import { useRouter } from 'next/navigation';
 import { PHASES } from '@/lib/workflow/types';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { SettingsModal } from '@/components/ui/SettingsModal';
 import type { Article } from '@/lib/workflow/types';
 
@@ -14,6 +14,23 @@ export default function HomePage() {
   const router = useRouter();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [platformFilter, setPlatformFilter] = useState<string>('all');
+
+  const filteredArticles = useMemo(() => {
+    let result = [...articles].reverse();
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter((a) =>
+        a.title.toLowerCase().includes(q) ||
+        a.content.replace(/<[^>]*>/g, '').toLowerCase().includes(q)
+      );
+    }
+    if (platformFilter !== 'all') {
+      result = result.filter((a) => a.platform === platformFilter);
+    }
+    return result;
+  }, [articles, searchQuery, platformFilter]);
 
   useEffect(() => {
     loadFromServer();
@@ -90,53 +107,85 @@ export default function HomePage() {
             <p className="text-[var(--muted-foreground)] text-sm">点击「新建文章」开始你的第一篇创作</p>
           </div>
         ) : (
-          <div className="flex gap-6">
-            {/* 左侧：文章列表 */}
-            <div className="flex-1 space-y-3">
-              {[...articles].reverse().map((article) => (
-                <div
-                  key={article.id}
-                  onClick={() => setDetailId(detailId === article.id ? null : article.id)}
-                  className={`cursor-pointer rounded-lg border p-4 transition-colors ${
-                    detailId === article.id
-                      ? 'border-[var(--primary)] bg-[var(--primary)]/5'
-                      : 'border-[var(--border)] hover:border-[var(--primary)]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h2 className="font-medium">{article.title || '未命名文章'}</h2>
-                    <span className="text-xs text-[var(--muted-foreground)]">{formatDate(article.updatedAt)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block rounded-full bg-[var(--muted)] px-2 py-0.5 text-xs text-[var(--muted-foreground)]">
-                      {PHASES[article.currentPhase - 1].name}
-                    </span>
-                    <span className="text-xs text-[var(--muted-foreground)]">
-                      {article.platform === 'wechat' ? '公众号' : article.platform === 'xiaohongshu' ? '小红书' : '知乎'}
-                    </span>
-                    <span className="text-xs text-[var(--muted-foreground)]">{article.content.length} 字</span>
-                  </div>
-                </div>
-              ))}
+          <>
+            {/* 搜索与过滤 */}
+            <div className="flex items-center gap-3 mb-6">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索文章标题或内容..."
+                className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm bg-transparent placeholder:text-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
+              />
+              <select
+                value={platformFilter}
+                onChange={(e) => setPlatformFilter(e.target.value)}
+                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm bg-transparent focus:outline-none focus:border-[var(--primary)]"
+              >
+                <option value="all">全部平台</option>
+                <option value="wechat">公众号</option>
+                <option value="xiaohongshu">小红书</option>
+                <option value="zhihu">知乎</option>
+              </select>
+              <span className="text-xs text-[var(--muted-foreground)] whitespace-nowrap">
+                {filteredArticles.length}/{articles.length} 篇
+              </span>
             </div>
 
-            {/* 右侧：详情面板 */}
-            {detailArticle && (
-              <div className="w-80 shrink-0">
-                <ArticleDetail
-                  article={detailArticle}
-                  onEdit={() => router.push(`/write/${detailArticle.id}`)}
-                  onExport={() => handleExportMD(detailArticle.id)}
-                  onDelete={() => {
-                    if (confirm('确定删除？')) {
-                      deleteArticle(detailArticle.id);
-                      setDetailId(null);
-                    }
-                  }}
-                />
+            <div className="flex gap-6">
+              {/* 左侧：文章列表 */}
+              <div className="flex-1 space-y-3">
+                {filteredArticles.length === 0 ? (
+                  <p className="text-center text-sm text-[var(--muted-foreground)] py-8">
+                    没有匹配的文章
+                  </p>
+                ) : (
+                  filteredArticles.map((article) => (
+                    <div
+                      key={article.id}
+                      onClick={() => setDetailId(detailId === article.id ? null : article.id)}
+                      className={`cursor-pointer rounded-lg border p-4 transition-colors ${
+                        detailId === article.id
+                          ? 'border-[var(--primary)] bg-[var(--primary)]/5'
+                          : 'border-[var(--border)] hover:border-[var(--primary)]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h2 className="font-medium">{article.title || '未命名文章'}</h2>
+                        <span className="text-xs text-[var(--muted-foreground)]">{formatDate(article.updatedAt)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block rounded-full bg-[var(--muted)] px-2 py-0.5 text-xs text-[var(--muted-foreground)]">
+                          {PHASES[article.currentPhase - 1].name}
+                        </span>
+                        <span className="text-xs text-[var(--muted-foreground)]">
+                          {article.platform === 'wechat' ? '公众号' : article.platform === 'xiaohongshu' ? '小红书' : '知乎'}
+                        </span>
+                        <span className="text-xs text-[var(--muted-foreground)]">{article.content.length} 字</span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
-            )}
-          </div>
+
+              {/* 右侧：详情面板 */}
+              {detailArticle && (
+                <div className="w-80 shrink-0">
+                  <ArticleDetail
+                    article={detailArticle}
+                    onEdit={() => router.push(`/write/${detailArticle.id}`)}
+                    onExport={() => handleExportMD(detailArticle.id)}
+                    onDelete={() => {
+                      if (confirm('确定删除？')) {
+                        deleteArticle(detailArticle.id);
+                        setDetailId(null);
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </>
         )}
       </main>
 

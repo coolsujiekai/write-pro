@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Article } from '@/lib/workflow/types';
 import { useArticleStore } from '@/stores/article-store';
 import { useStyleMemoryStore, type StyleInsight } from '@/stores/style-memory-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { calculateQualityMetrics } from '@/lib/quality/metrics';
 import { useRouter } from 'next/navigation';
 import { nanoid } from 'nanoid';
 
@@ -23,6 +24,11 @@ export function FinalOutput({ article }: FinalOutputProps) {
 
   const wordCount = article.content.replace(/<[^>]*>/g, '').length;
   const hasAiDraft = article.aiDraft && article.aiDraft.length > 0;
+
+  const qualityMetrics = useMemo(() => {
+    if (!hasAiDraft || wordCount === 0) return null;
+    return calculateQualityMetrics(article.aiDraft!, article.content);
+  }, [article.aiDraft, article.content, hasAiDraft, wordCount]);
 
   // 已有缓存分析结果 → 直接使用；否则触发分析
   const cached = article.styleAnalysis;
@@ -144,6 +150,17 @@ export function FinalOutput({ article }: FinalOutputProps) {
               </span>
             </div>
           </div>
+
+          {qualityMetrics && (
+            <div className="border-t border-[var(--border)] pt-2 space-y-1">
+              <h3 className="text-xs font-medium text-[var(--muted-foreground)]">AI 对比</h3>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <QualityStat label="采纳率" value={qualityMetrics.adoptionRate} higherIsBetter />
+                <QualityStat label="修改率" value={qualityMetrics.editRate} />
+                <QualityStat label="重写率" value={qualityMetrics.rewriteRate} />
+              </div>
+            </div>
+          )}
         </div>
 
         <button
@@ -292,12 +309,39 @@ export function FinalOutput({ article }: FinalOutputProps) {
         )}
       </div>
 
+      {qualityMetrics && (
+        <div className="rounded-lg border border-[var(--border)] p-4 space-y-2">
+          <h3 className="text-sm font-medium">AI 质量报告</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <QualityStat label="采纳率" value={qualityMetrics.adoptionRate} higherIsBetter />
+            <QualityStat label="修改率" value={qualityMetrics.editRate} />
+            <QualityStat label="重写率" value={qualityMetrics.rewriteRate} />
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)]">
+            AI 初稿 {qualityMetrics.aiCharCount} 字，最终版 {qualityMetrics.userCharCount} 字。
+            采纳率越高说明 AI 越懂你的风格。
+          </p>
+        </div>
+      )}
+
       <button
         onClick={() => router.push('/')}
         className="w-full rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm text-white"
       >
         返回首页
       </button>
+    </div>
+  );
+}
+
+function QualityStat({ label, value, higherIsBetter }: { label: string; value: number; higherIsBetter?: boolean }) {
+  const pct = Math.round(value * 100);
+  const isGood = higherIsBetter ? pct >= 60 : pct <= 30;
+  const color = isGood ? 'text-green-600' : value > 0 ? 'text-amber-600' : 'text-[var(--muted-foreground)]';
+  return (
+    <div className="text-center">
+      <span className={`text-lg font-bold ${color}`}>{pct}%</span>
+      <p className="text-xs text-[var(--muted-foreground)]">{label}</p>
     </div>
   );
 }
