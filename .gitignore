@@ -5,3 +5,4 @@ node_modules/
 out/
 src/lib/ai/config.json
 作品/
+tsconfig.tsbuildinfo

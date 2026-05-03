@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSettingsStore, type AIProvider } from '@/stores/settings-store';
+import { useSettingsStore, type AIProvider, type ModelTier } from '@/stores/settings-store';
 
 interface SettingsModalProps {
   open: boolean;
@@ -10,20 +10,28 @@ interface SettingsModalProps {
 
 const PROVIDER_LABELS: Record<AIProvider, string> = {
   mimo: 'MiMo',
-  anthropic: 'Anthropic',
+  deepseek: 'DeepSeek',
+  kimi: 'Kimi (月之暗面)',
   openai: 'OpenAI',
 };
 
 const PROVIDER_DESCRIPTIONS: Record<AIProvider, string> = {
   mimo: '小米 MiMo 推理模型',
-  anthropic: 'Claude 系列模型',
+  deepseek: 'DeepSeek V3 / R1',
+  kimi: '月之暗面 Moonshot',
   openai: 'GPT 系列模型',
 };
 
+interface ServerProviderInfo {
+  hasKey: boolean;
+  baseUrl: string;
+  models: { light: string; standard: string };
+}
+
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { provider, configs, setProvider, setConfig, loadFromStorage } = useSettingsStore();
-  const [apiKeyInputs, setApiKeyInputs] = useState<Record<AIProvider, string>>({ mimo: '', anthropic: '', openai: '' });
-  const [serverConfig, setServerConfig] = useState<Record<string, { hasKey: boolean; baseUrl: string; model: string }> | null>(null);
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<AIProvider, string>>({ mimo: '', deepseek: '', kimi: '', openai: '' });
+  const [serverProviders, setServerProviders] = useState<Record<string, ServerProviderInfo> | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -38,7 +46,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     try {
       const res = await fetch('/api/settings');
       if (res.ok) {
-        setServerConfig(await res.json());
+        const data = await res.json();
+        setServerProviders(data.providers ?? data);
       }
     } catch {
       // ignore
@@ -50,10 +59,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setMessage('');
     try {
       const key = apiKeyInputs[p];
-      const body: Record<string, string> = { provider: p };
+      const cfg = configs[p];
+      const body: Record<string, unknown> = { provider: p };
       if (key) body.apiKey = key;
-      if (configs[p].baseUrl) body.baseUrl = configs[p].baseUrl;
-      if (configs[p].model) body.model = configs[p].model;
+      if (cfg.baseUrl) body.baseUrl = cfg.baseUrl;
+      body.models = cfg.models;
 
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -76,6 +86,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   };
 
+  const handleModelChange = (p: AIProvider, tier: ModelTier, value: string) => {
+    setConfig(p, { models: { ...configs[p].models, [tier]: value } });
+  };
+
   if (!open) return null;
 
   return (
@@ -95,7 +109,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           {(Object.keys(PROVIDER_LABELS) as AIProvider[]).map((p) => {
             const isActive = provider === p;
             const cfg = configs[p];
-            const serverCfg = serverConfig?.[p];
+            const serverCfg = serverProviders?.[p];
 
             return (
               <div
@@ -144,14 +158,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                         className="w-full rounded border border-[var(--border)] bg-transparent px-3 py-1.5 text-sm focus:border-[var(--primary)] focus:outline-none"
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs text-[var(--muted-foreground)] mb-1">模型名称</label>
-                      <input
-                        type="text"
-                        value={cfg.model}
-                        onChange={(e) => setConfig(p, { model: e.target.value })}
-                        className="w-full rounded border border-[var(--border)] bg-transparent px-3 py-1.5 text-sm focus:border-[var(--primary)] focus:outline-none"
-                      />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-[var(--muted-foreground)] mb-1">轻量模型 (Light)</label>
+                        <input
+                          type="text"
+                          value={cfg.models.light}
+                          onChange={(e) => handleModelChange(p, 'light', e.target.value)}
+                          placeholder="用于简单任务"
+                          className="w-full rounded border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs focus:border-[var(--primary)] focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[var(--muted-foreground)] mb-1">主力模型 (Standard)</label>
+                        <input
+                          type="text"
+                          value={cfg.models.standard}
+                          onChange={(e) => handleModelChange(p, 'standard', e.target.value)}
+                          placeholder="用于生成和润色"
+                          className="w-full rounded border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs focus:border-[var(--primary)] focus:outline-none"
+                        />
+                      </div>
                     </div>
                     <button
                       onClick={() => handleSave(p)}

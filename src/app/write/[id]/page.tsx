@@ -8,6 +8,7 @@ import { WorkflowPanel } from '@/components/workflow/WorkflowPanel';
 import { PlatformSelector } from '@/components/ui/PlatformSelector';
 import { useEffect, useState } from 'react';
 import { SettingsModal } from '@/components/ui/SettingsModal';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 export default function WritePage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +36,7 @@ export default function WritePage() {
 
   return (
     <div className="flex h-screen flex-col">
+      <ErrorBoundary>
       <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
         <div className="flex items-center gap-4">
           <button
@@ -82,6 +84,7 @@ export default function WritePage() {
         </main>
       </div>
 
+      </ErrorBoundary>
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );

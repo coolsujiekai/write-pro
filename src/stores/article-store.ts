@@ -60,10 +60,14 @@ function reviveDates(articles: Article[]): Article[] {
 
 // 防抖同步到服务端文件
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let isDirty = false;
+
 function debouncedSync(articles: Article[]) {
+  isDirty = true;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    for (const article of articles) {
+    // 逐个同步文章
+    const promises = articles.map((article) =>
       fetch('/api/articles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,9 +84,26 @@ function debouncedSync(articles: Article[]) {
             createdAt: i.createdAt instanceof Date ? i.createdAt.toISOString() : i.createdAt,
           })),
         }),
-      }).catch(() => { /* silent */ });
-    }
+      }).catch(() => { /* silent */ })
+    );
+    Promise.all(promises).finally(() => { isDirty = false; });
   }, 1000);
+}
+
+/** beforeunload 兜底：关标签页时用 sendBeacon 发送最新数据 */
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (!isDirty) return;
+    const raw = localStorage.getItem('write-pro-articles');
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const articles = parsed?.state?.articles ?? [];
+      for (const article of articles) {
+        navigator.sendBeacon('/api/articles', JSON.stringify(article));
+      }
+    } catch { /* ignore */ }
+  });
 }
 
 export const useArticleStore = create<ArticleState>()(

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from 'fs';
+import { readFile, writeFile, readdir, unlink, mkdir, access } from 'fs/promises';
 import { join } from 'path';
 
 import type { StyleAnalysisResult } from '@/lib/workflow/style-types';
@@ -21,9 +21,11 @@ export interface StoredArticle {
 
 const WORKS_DIR = join(process.cwd(), '作品');
 
-function ensureDir() {
-  if (!existsSync(WORKS_DIR)) {
-    mkdirSync(WORKS_DIR, { recursive: true });
+async function ensureDir() {
+  try {
+    await mkdir(WORKS_DIR, { recursive: true });
+  } catch {
+    // dir exists or can't create — handled by callers
   }
 }
 
@@ -34,28 +36,34 @@ function fileName(article: { id: string; title: string; updatedAt: string }): st
   return `${dateStr}-${safeTitle}-${article.id.slice(0, 6)}.json`;
 }
 
-export function listArticles(): StoredArticle[] {
-  ensureDir();
-  const files = readdirSync(WORKS_DIR).filter((f) => f.endsWith('.json'));
-  const articles: StoredArticle[] = [];
-  for (const file of files) {
-    try {
-      const raw = readFileSync(join(WORKS_DIR, file), 'utf-8');
-      articles.push(JSON.parse(raw));
-    } catch {
-      // skip corrupted files
-    }
-  }
-  return articles.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+export async function listArticles(): Promise<StoredArticle[]> {
+  await ensureDir();
+  const files = (await readdir(WORKS_DIR)).filter((f) => f.endsWith('.json'));
+
+  const results = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const raw = await readFile(join(WORKS_DIR, file), 'utf-8');
+        return JSON.parse(raw) as StoredArticle;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return results
+    .filter((a): a is StoredArticle => a !== null)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-export function readArticle(id: string): StoredArticle | null {
-  ensureDir();
-  const files = readdirSync(WORKS_DIR).filter((f) => f.endsWith('.json'));
+export async function readArticle(id: string): Promise<StoredArticle | null> {
+  await ensureDir();
+  const files = (await readdir(WORKS_DIR)).filter((f) => f.endsWith('.json'));
   for (const file of files) {
     if (file.includes(id.slice(0, 6))) {
       try {
-        return JSON.parse(readFileSync(join(WORKS_DIR, file), 'utf-8'));
+        const raw = await readFile(join(WORKS_DIR, file), 'utf-8');
+        return JSON.parse(raw);
       } catch {
         return null;
       }
@@ -64,24 +72,27 @@ export function readArticle(id: string): StoredArticle | null {
   return null;
 }
 
-export function saveArticle(article: StoredArticle): void {
-  ensureDir();
-  // 先删旧文件（id 可能换了文件名）
-  deleteArticleFile(article.id);
+export async function saveArticle(article: StoredArticle): Promise<void> {
+  await ensureDir();
+  await deleteArticleFile(article.id);
   const name = fileName(article);
-  writeFileSync(join(WORKS_DIR, name), JSON.stringify(article, null, 2) + '\n');
+  await writeFile(join(WORKS_DIR, name), JSON.stringify(article, null, 2) + '\n');
 }
 
-export function deleteArticleFile(id: string): void {
-  ensureDir();
-  const files = readdirSync(WORKS_DIR).filter((f) => f.endsWith('.json'));
-  for (const file of files) {
-    if (file.includes(id.slice(0, 6))) {
-      try {
-        unlinkSync(join(WORKS_DIR, file));
-      } catch {
-        // ignore
+export async function deleteArticleFile(id: string): Promise<void> {
+  await ensureDir();
+  const files = (await readdir(WORKS_DIR)).filter((f) => f.endsWith('.json'));
+  await Promise.all(
+    files.map(async (file) => {
+      if (file.includes(id.slice(0, 6))) {
+        try {
+          const filePath = join(WORKS_DIR, file);
+          await access(filePath);
+          await unlink(filePath);
+        } catch {
+          // file doesn't exist or can't be removed
+        }
       }
-    }
-  }
+    })
+  );
 }

@@ -8,7 +8,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '缺少文章 id' }, { status: 400 });
     }
 
-    const article = readArticle(id);
+    const article = await readArticle(id);
     if (!article) {
       return NextResponse.json({ error: '文章不存在' }, { status: 404 });
     }

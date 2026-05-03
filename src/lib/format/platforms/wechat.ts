@@ -1,4 +1,3 @@
-import { markdownToHtml } from '../markdown-to-html';
 import { inlineStyles } from '../inline-styles';
 
 const WECHAT_CSS = `
@@ -15,7 +14,7 @@ const WECHAT_CSS = `
   li { margin: 4px 0; }
 `;
 
-export function formatForWechat(markdown: string): string {
-  const html = markdownToHtml(markdown);
+/** 编辑器输出已是 HTML，直接用 juice inline styles，不经过 markdown-it */
+export function formatForWechat(html: string): string {
   return inlineStyles(html, WECHAT_CSS);
 }

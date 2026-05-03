@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { listArticles, saveArticle, deleteArticleFile, type StoredArticle } from '@/lib/storage/article-files';
 
 export async function GET() {
-  const articles = listArticles();
+  const articles = await listArticles();
   return NextResponse.json(articles);
 }
 
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     if (!article.id) {
       return NextResponse.json({ error: '缺少文章 id' }, { status: 400 });
     }
-    saveArticle(article);
+    await saveArticle(article);
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : '保存失败';
@@ -26,7 +26,7 @@ export async function DELETE(request: Request) {
     if (!id) {
       return NextResponse.json({ error: '缺少文章 id' }, { status: 400 });
     }
-    deleteArticleFile(id);
+    await deleteArticleFile(id);
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : '删除失败';

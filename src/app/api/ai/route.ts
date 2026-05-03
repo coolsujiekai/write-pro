@@ -1,63 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chat, type AIProvider } from '@/lib/ai/client';
-
-/** 从 AI 返回文本中鲁棒提取 JSON 对象 */
-function extractJson(text: string): Record<string, unknown> | null {
-  // 1. 去掉 markdown 代码块
-  let cleaned = text.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-  }
-
-  // 2. 找到第一个 { 和最后一个 }，截取 JSON 对象
-  const firstBrace = cleaned.indexOf('{');
-  const lastBrace = cleaned.lastIndexOf('}');
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return null;
-  }
-  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
-
-  // 3. 替换中文引号为标准双引号
-  cleaned = cleaned.replace(/[""]/g, '"').replace(/['']/g, "'");
-
-  // 4. 去掉尾逗号（, } 或 , ]）
-  cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
-
-  // 5. 尝试解析
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
+import { extractJson } from '@/lib/ai/extract-json';
+import { logger } from '@/lib/logger';
+import { getSharedWritingRules } from '@/lib/skill/prompt-loader';
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
   try {
     const body = await request.json();
     const { action, data } = body;
     const provider = (request.headers.get('X-AI-Provider') ?? undefined) as AIProvider | undefined;
 
+    let result: NextResponse;
     switch (action) {
       case 'interview':
-        return handleInterview(data, provider);
+        result = await handleInterview(data, provider);
+        break;
       case 'suggest-theme':
-        return handleSuggestTheme(data, provider);
+        result = await handleSuggestTheme(data, provider);
+        break;
       case 'generate-draft':
-        return handleGenerateDraft(data, provider);
+        result = await handleGenerateDraft(data, provider);
+        break;
       case 'check-ai':
-        return handleCheckAI(data, provider);
+        result = await handleCheckAI(data, provider);
+        break;
       case 'rewrite':
-        return handleRewrite(data, provider);
+        result = await handleRewrite(data, provider);
+        break;
       case 'polish-draft':
-        return handlePolishDraft(data, provider);
+        result = await handlePolishDraft(data, provider);
+        break;
       case 'analyze-style':
-        return handleAnalyzeStyle(data, provider);
+        result = await handleAnalyzeStyle(data, provider);
+        break;
       case 'analyze-diff':
-        return handleAnalyzeDiff(data, provider);
+        result = await handleAnalyzeDiff(data, provider);
+        break;
       default:
         return NextResponse.json({ error: '未知操作' }, { status: 400 });
     }
+
+    logger.ai(action, {
+      provider: provider ?? 'default',
+      durationMs: Date.now() - startTime,
+    });
+
+    return result;
   } catch (error) {
+    logger.error('ai-route', error, { action: '(parsing)', durationMs: Date.now() - startTime });
     const message = error instanceof Error ? error.message : 'AI 请求失败';
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -90,7 +81,8 @@ async function handleInterview(data: { materials: string[]; previousAnswers: str
     messages: [
       { role: 'user', content: `请根据以下信息，问一个最能挖掘故事的问题。${materialsText}${previousText}` },
     ],
-    maxTokens: 1000,
+    maxTokens: 500,
+    tier: 'light',
     provider,
   });
 
@@ -119,7 +111,8 @@ async function handleSuggestTheme(data: { materials: string[]; interviews: { q: 
         content: `素材：\n${materials.join('\n---\n')}\n\n采访记录：\n${interviewText}\n\n请确定文章主题。`,
       },
     ],
-    maxTokens: 1500,
+    maxTokens: 800,
+    tier: 'light',
     provider,
   });
 
@@ -148,14 +141,11 @@ async function handleGenerateDraft(data: {
       ? '小红书文章要求：300-800字，口语化，适当emoji，结尾留互动钩子。'
       : '知乎文章要求：逻辑清晰，有论据支撑，可以适当引用数据。';
 
+  const sharedRules = await getSharedWritingRules();
+
   const system = `你是一位资深写作助手。根据以下信息生成一篇文章初稿。
 
-写作规则：
-- 像说话一样写，不要AI味
-- 禁止使用：首先其次最后、值得一提的是、在这个快节奏的时代、综上所述
-- 短句为主，一句话不超过30个字
-- 具体不要抽象
-- 保持作者的语气，不要改成你的风格
+${sharedRules}
 ${platformRules}
 ${stylePrompt ? `\n${stylePrompt}` : ''}
 
@@ -185,6 +175,7 @@ ${structure}
       },
     ],
     maxTokens: 4000,
+    tier: 'standard',
     provider,
   });
 
@@ -211,6 +202,7 @@ async function handleCheckAI(data: { content: string }, provider?: AIProvider) {
       { role: 'user', content: `请检查以下文章：\n\n${content}` },
     ],
     maxTokens: 2000,
+    tier: 'light',
     provider,
   });
 
@@ -238,6 +230,7 @@ async function handleRewrite(data: { content: string; instruction: string }, pro
       { role: 'user', content: `原文：\n${content}\n\n修改指令：${instruction}` },
     ],
     maxTokens: 4000,
+    tier: 'standard',
     provider,
   });
 
@@ -282,6 +275,7 @@ ${platformHint}
       { role: 'user', content: `请修改以下文章：\n\n${content}` },
     ],
     maxTokens: 4000,
+    tier: 'standard',
     provider,
   });
 
@@ -349,6 +343,7 @@ ${contextBlock}
       { role: 'user', content: `请分析以下文章的写作风格：\n\n标题：${title}\n\n${plainText}` },
     ],
     maxTokens: 3000,
+    tier: 'standard',
     provider,
   });
 
@@ -411,6 +406,7 @@ ${contextBlock}
       { role: 'user', content: `标题：${title}\n\n## AI 初稿\n${aiPlain}\n\n## 用户修改后\n${userPlain}` },
     ],
     maxTokens: 3000,
+    tier: 'standard',
     provider,
   });
 

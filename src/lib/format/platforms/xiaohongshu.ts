@@ -1,4 +1,3 @@
-import { markdownToHtml } from '../markdown-to-html';
 import { inlineStyles } from '../inline-styles';
 
 const XHS_CSS = `
@@ -20,16 +19,19 @@ export interface XiaohongshuOutput {
   };
 }
 
-export function formatForXiaohongshu(markdown: string): XiaohongshuOutput {
-  const html = inlineStyles(markdownToHtml(markdown), XHS_CSS);
+/** 编辑器输出已是 HTML，跳过 MD 中间层 */
+export function formatForXiaohongshu(html: string): XiaohongshuOutput {
+  const styledHtml = inlineStyles(html, XHS_CSS);
 
-  const titleMatch = markdown.match(/^#\s+(.+)$/m);
-  const title = titleMatch?.[1] ?? '';
+  // 从 HTML 中提取 h1 作为标题
+  const titleMatch = html.match(/<h1[^>]*>(.+?)<\/h1>/i);
+  const title = titleMatch?.[1]?.replace(/<[^>]*>/g, '') ?? '';
 
-  const tags = extractTags(markdown);
+  // 从 HTML 文本中提取 #tag
+  const tags = extractTags(html);
 
   return {
-    html,
+    html: styledHtml,
     tags,
     coverText: {
       title: title.slice(0, 20),
@@ -39,7 +41,8 @@ export function formatForXiaohongshu(markdown: string): XiaohongshuOutput {
   };
 }
 
-function extractTags(markdown: string): string[] {
+function extractTags(html: string): string[] {
+  const plainText = html.replace(/<[^>]*>/g, ' ');
   const tagRegex = /#[一-龥a-zA-Z0-9]+/g;
-  return [...new Set(markdown.match(tagRegex) ?? [])];
+  return [...new Set(plainText.match(tagRegex) ?? [])];
 }

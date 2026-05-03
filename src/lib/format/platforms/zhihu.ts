@@ -1,4 +1,3 @@
-import { markdownToHtml } from '../markdown-to-html';
 import { inlineStyles } from '../inline-styles';
 
 const ZHIHU_CSS = `
@@ -14,7 +13,7 @@ const ZHIHU_CSS = `
   pre { background: #f6f6f6; padding: 16px; border-radius: 6px; overflow-x: auto; }
 `;
 
-export function formatForZhihu(markdown: string): string {
-  const html = markdownToHtml(markdown);
+/** 编辑器输出已是 HTML，直接用 juice inline styles */
+export function formatForZhihu(html: string): string {
   return inlineStyles(html, ZHIHU_CSS);
 }

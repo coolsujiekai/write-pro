@@ -2,17 +2,19 @@
 
 import { create } from 'zustand';
 
-export type AIProvider = 'mimo' | 'anthropic' | 'openai';
+export type AIProvider = 'mimo' | 'deepseek' | 'kimi' | 'openai';
+export type ModelTier = 'light' | 'standard';
 
 interface ProviderConfig {
   baseUrl: string;
-  model: string;
+  models: Record<ModelTier, string>;
 }
 
 const DEFAULTS: Record<AIProvider, ProviderConfig> = {
-  mimo: { baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514' },
-  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
+  mimo: { baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', models: { light: 'mimo-v2.5-mini', standard: 'mimo-v2.5-pro' } },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', models: { light: 'deepseek-chat', standard: 'deepseek-reasoner' } },
+  kimi: { baseUrl: 'https://api.moonshot.cn/v1', models: { light: 'moonshot-v1-8k', standard: 'moonshot-v1-32k' } },
+  openai: { baseUrl: 'https://api.openai.com/v1', models: { light: 'gpt-4o-mini', standard: 'gpt-4o' } },
 };
 
 interface SettingsState {
@@ -29,13 +31,20 @@ function loadState(): Partial<SettingsState> {
     const raw = localStorage.getItem('write-pro-settings');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
+    const configs = { ...DEFAULTS };
+    if (parsed.configs) {
+      for (const p of Object.keys(DEFAULTS) as AIProvider[]) {
+        if (parsed.configs[p]) {
+          configs[p] = {
+            baseUrl: parsed.configs[p].baseUrl ?? DEFAULTS[p].baseUrl,
+            models: { ...DEFAULTS[p].models, ...parsed.configs[p]?.models },
+          };
+        }
+      }
+    }
     return {
       provider: parsed.provider ?? 'mimo',
-      configs: {
-        mimo: { ...DEFAULTS.mimo, ...parsed.configs?.mimo },
-        anthropic: { ...DEFAULTS.anthropic, ...parsed.configs?.anthropic },
-        openai: { ...DEFAULTS.openai, ...parsed.configs?.openai },
-      },
+      configs,
     };
   } catch {
     return {};
@@ -60,9 +69,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setConfig: (provider, config) => {
+    const existing = get().configs[provider];
     const configs = {
       ...get().configs,
-      [provider]: { ...get().configs[provider], ...config },
+      [provider]: {
+        ...existing,
+        ...config,
+        models: config.models ? { ...existing.models, ...config.models } : existing.models,
+      },
     };
     set({ configs });
     saveState({ provider: get().provider, configs });
