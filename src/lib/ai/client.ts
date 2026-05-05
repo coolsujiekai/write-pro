@@ -53,7 +53,7 @@ async function resolveProvider(requested?: AIProvider, tier: ModelTier = 'standa
   if (process.env.MIMO_API_KEY) {
     return {
       provider: 'mimo',
-      config: { apiKey: process.env.MIMO_API_KEY, baseUrl: process.env.MIMO_BASE_URL ?? 'https://token-plan-cn.xiaomimimo.com/v1', models: { light: 'mimo-v2.5-mini', standard: 'mimo-v2.5-pro' } },
+      config: { apiKey: process.env.MIMO_API_KEY, baseUrl: process.env.MIMO_BASE_URL ?? 'https://token-plan-cn.xiaomimimo.com/v1', models: { light: 'mimo-v2-omni', standard: 'mimo-v2.5-pro' } },
       model: process.env.MIMO_MODEL ?? 'mimo-v2.5-pro',
     };
   }
@@ -82,7 +82,7 @@ async function resolveProvider(requested?: AIProvider, tier: ModelTier = 'standa
   throw new Error('未配置 AI API Key。请在设置中配置 API Key。');
 }
 
-/** 指数退避重试 */
+/** 指数退避重试。仅重试 5xx/网络错误，4xx 直接抛出不重试。 */
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -90,6 +90,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
       return await fn();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      const statusMatch = lastError.message.match(/API error.*: (\d+)/);
+      if (statusMatch && Number(statusMatch[1]) < 500) throw lastError;
       if (attempt === maxRetries) break;
       const delay = Math.pow(2, attempt) * 1000;
       await new Promise((r) => setTimeout(r, delay));
@@ -99,7 +101,7 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 }
 
 export async function chat(request: AIRequest): Promise<AIResponse> {
-  const { provider, config, model } = await resolveProvider(request.provider, request.tier);
+  const { config, model } = await resolveProvider(request.provider, request.tier);
 
   const messages: { role: string; content: string }[] = [];
   if (request.system) {
@@ -220,7 +222,9 @@ export async function chatStream(request: AIRequest, callbacks: AIStreamCallback
 
       callbacks.onDone(fullContent);
     } catch (err) {
-      callbacks.onError(err instanceof Error ? err : new Error(String(err)));
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      callbacks.onError(wrapped);
+      throw wrapped;
     } finally {
       clearTimeout(timeout);
     }

@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import type { Platform } from '@/lib/workflow/types';
 
 interface PlatformSelectorProps {
@@ -13,7 +14,7 @@ const PLATFORMS: { value: Platform; label: string }[] = [
   { value: 'zhihu', label: '知乎' },
 ];
 
-export function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
+export const PlatformSelector = memo(function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
   return (
     <div className="flex rounded-lg border border-[var(--border)]">
       {PLATFORMS.map((p) => (
@@ -31,4 +32,4 @@ export function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
       ))}
     </div>
   );
-}
+});

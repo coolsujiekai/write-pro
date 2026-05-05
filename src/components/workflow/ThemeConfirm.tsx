@@ -4,13 +4,16 @@ import { useState } from 'react';
 import type { Article, ThemeConfirmation } from '@/lib/workflow/types';
 import { useArticleStore } from '@/stores/article-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { Feedback } from '@/components/ui/Feedback';
 
 interface ThemeConfirmProps {
   article: Article;
 }
 
 export function ThemeConfirm({ article }: ThemeConfirmProps) {
-  const { setTheme, setPhase, updateContent } = useArticleStore();
+  const setTheme = useArticleStore((s) => s.setTheme);
+  const setPhase = useArticleStore((s) => s.setPhase);
+  const updateContent = useArticleStore((s) => s.updateContent);
   const provider = useSettingsStore((s) => s.provider);
   const [theme, setThemeLocal] = useState<ThemeConfirmation>(
     article.theme ?? { oneSentence: '', readerValue: '', coreMessage: '' }
@@ -96,13 +99,19 @@ export function ThemeConfirm({ article }: ThemeConfirmProps) {
         <p className="text-xs text-red-500">{error}</p>
       )}
 
+      {theme.oneSentence && (
+        <div className="flex items-center justify-end">
+          <Feedback articleId={article.id} target="theme" />
+        </div>
+      )}
+
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">
             这篇文章到底讲什么？
           </label>
           <p className="text-xs text-[var(--muted-foreground)] mb-2">
-            用一句话概括主题。比如："读书不是为了记住，是为了改变思维方式。"
+            用一句话概括主题。比如：&ldquo;读书不是为了记住，是为了改变思维方式。&rdquo;
           </p>
           <input
             type="text"

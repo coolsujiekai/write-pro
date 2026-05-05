@@ -32,10 +32,11 @@ function debouncedSync(insights: StyleInsight[]) {
   }, 1000);
 }
 
-/** beforeunload 兜底：用 sendBeacon 同步最终数据 */
+/** beforeunload 兜底：仅在写作用页用 sendBeacon 同步最终数据 */
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     if (!isDirty) return;
+    if (!window.location.pathname.startsWith('/write/')) return;
     const raw = localStorage.getItem('write-pro-style-memory');
     if (raw) {
       try {

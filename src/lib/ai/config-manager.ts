@@ -1,4 +1,4 @@
-import { readFile, writeFile, access, copyFile } from 'fs/promises';
+import { readFile, writeFile, access } from 'fs/promises';
 import { join } from 'path';
 
 export type AIProvider = 'mimo' | 'deepseek' | 'kimi' | 'openai';
@@ -14,6 +14,10 @@ export interface ProviderConfig {
 export interface AIConfig {
   defaultProvider: AIProvider;
   providers: Record<AIProvider, ProviderConfig>;
+  search?: {
+    provider: 'tavily' | 'bocha';
+    apiKey: string;
+  };
 }
 
 const CONFIG_PATH = join(process.cwd(), 'src/lib/ai/config.json');
@@ -27,7 +31,7 @@ async function readDefaults(): Promise<AIConfig> {
     return {
       defaultProvider: 'mimo',
       providers: {
-        mimo: { apiKey: '', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', models: { light: 'mimo-v2.5-mini', standard: 'mimo-v2.5-pro' } },
+        mimo: { apiKey: '', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', models: { light: 'mimo-v2-omni', standard: 'mimo-v2.5-pro' } },
         deepseek: { apiKey: '', baseUrl: 'https://api.deepseek.com/v1', models: { light: 'deepseek-chat', standard: 'deepseek-reasoner' } },
         kimi: { apiKey: '', baseUrl: 'https://api.moonshot.cn/v1', models: { light: 'moonshot-v1-8k', standard: 'moonshot-v1-32k' } },
         openai: { apiKey: '', baseUrl: 'https://api.openai.com/v1', models: { light: 'gpt-4o-mini', standard: 'gpt-4o' } },

@@ -23,6 +23,7 @@ interface ArticleState {
   setStructure: (articleId: string, structure: StructurePlan) => void;
   setAiDraft: (id: string, aiDraft: string) => void;
   setStyleAnalysis: (id: string, analysis: StyleAnalysisResult | null) => void;
+  addFeedback: (id: string, target: string, rating: 'good' | 'bad', reason?: string) => void;
 
   loadFromServer: () => Promise<void>;
   deleteArticle: (id: string) => void;
@@ -36,6 +37,7 @@ function createDefaultArticle(): Article {
     content: '',
     aiDraft: '',
     styleAnalysis: null,
+    feedback: [],
     currentPhase: 1,
     platform: 'wechat',
     status: 'draft',
@@ -58,51 +60,100 @@ function reviveDates(articles: Article[]): Article[] {
   }));
 }
 
-// 防抖同步到服务端文件
+function serializeArticle(article: Article): Record<string, unknown> {
+  return {
+    ...article,
+    createdAt: article.createdAt instanceof Date ? article.createdAt.toISOString() : article.createdAt,
+    updatedAt: article.updatedAt instanceof Date ? article.updatedAt.toISOString() : article.updatedAt,
+    materials: article.materials.map((m) => ({
+      ...m,
+      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
+    })),
+    interviews: article.interviews.map((i) => ({
+      ...i,
+      createdAt: i.createdAt instanceof Date ? i.createdAt.toISOString() : i.createdAt,
+    })),
+  };
+}
+
+// 防抖同步：只发送变更的文章
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let isDirty = false;
+const dirtyIds = new Set<string>();
 
-function debouncedSync(articles: Article[]) {
+function debouncedSync(article: Article) {
   isDirty = true;
+  dirtyIds.add(article.id);
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    // 逐个同步文章
-    const promises = articles.map((article) =>
-      fetch('/api/articles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...article,
-          createdAt: article.createdAt instanceof Date ? article.createdAt.toISOString() : article.createdAt,
-          updatedAt: article.updatedAt instanceof Date ? article.updatedAt.toISOString() : article.updatedAt,
-          materials: article.materials.map((m) => ({
-            ...m,
-            createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
-          })),
-          interviews: article.interviews.map((i) => ({
-            ...i,
-            createdAt: i.createdAt instanceof Date ? i.createdAt.toISOString() : i.createdAt,
-          })),
-        }),
-      }).catch(() => { /* silent */ })
-    );
+    const ids = [...dirtyIds];
+    dirtyIds.clear();
+    const promises = ids.map((id) => {
+      const raw = localStorage.getItem('write-pro-articles');
+      if (!raw) return Promise.resolve();
+      try {
+        const parsed = JSON.parse(raw);
+        const articles: Article[] = parsed?.state?.articles ?? [];
+        const latest = articles.find((a) => a.id === id);
+        if (!latest) return Promise.resolve();
+        return fetch('/api/articles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(serializeArticle(latest)),
+        }).catch(() => { /* silent */ });
+      } catch {
+        return Promise.resolve();
+      }
+    });
     Promise.all(promises).finally(() => { isDirty = false; });
   }, 1000);
 }
 
-/** beforeunload 兜底：关标签页时用 sendBeacon 发送最新数据 */
+/** beforeunload 兜底：仅在写作用页触发 */
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     if (!isDirty) return;
+    if (!window.location.pathname.startsWith('/write/')) return;
     const raw = localStorage.getItem('write-pro-articles');
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw);
-      const articles = parsed?.state?.articles ?? [];
-      for (const article of articles) {
-        navigator.sendBeacon('/api/articles', JSON.stringify(article));
+      const articles: Article[] = parsed?.state?.articles ?? [];
+      const toSync = articles.filter((a) => dirtyIds.has(a.id));
+      for (const article of toSync) {
+        navigator.sendBeacon('/api/articles', JSON.stringify(serializeArticle(article)));
       }
     } catch { /* ignore */ }
+  });
+}
+
+/**
+ * 通用更新辅助：更新 articles 数组中指定 id 的文章，同时同步 currentArticle。
+ * changes 支持直接字段或 (article) => article 的 updater 模式。
+ */
+function updateArticle(
+  set: (fn: (state: ArticleState) => Partial<ArticleState>) => void,
+  get: () => ArticleState,
+  id: string,
+  changes: Partial<Article> | ((article: Article) => Article),
+) {
+  set((state) => {
+    const articles = state.articles.map((a) => {
+      if (a.id !== id) return a;
+      const updated: Article = typeof changes === 'function'
+        ? { ...changes(a), updatedAt: new Date() }
+        : { ...a, ...changes, updatedAt: new Date() };
+      debouncedSync(updated);
+      return updated;
+    });
+
+    return {
+      articles,
+      currentArticle:
+        state.currentArticle?.id === id
+          ? articles.find((a) => a.id === id) ?? state.currentArticle
+          : state.currentArticle,
+    };
   });
 }
 
@@ -116,7 +167,7 @@ export const useArticleStore = create<ArticleState>()(
         const article = createDefaultArticle();
         set((state) => {
           const next = [...state.articles, article];
-          debouncedSync(next);
+          debouncedSync(article);
           return { articles: next, currentArticle: article };
         });
         return article;
@@ -127,199 +178,44 @@ export const useArticleStore = create<ArticleState>()(
         set({ currentArticle: article });
       },
 
-      updateContent: (id, content) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, content, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, content, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      updateTitle: (id, title) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, title, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, title, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      setPhase: (id, phase) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, currentPhase: phase, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, currentPhase: phase, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      setPlatform: (id, platform) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, platform, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, platform, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
+      updateContent: (id, content) => updateArticle(set, get, id, { content }),
+      updateTitle: (id, title) => updateArticle(set, get, id, { title }),
+      setPhase: (id, phase) => updateArticle(set, get, id, { currentPhase: phase }),
+      setPlatform: (id, platform) => updateArticle(set, get, id, { platform }),
+      setTheme: (articleId, theme) => updateArticle(set, get, articleId, { theme }),
+      setStructure: (articleId, structure) => updateArticle(set, get, articleId, { structure }),
+      setAiDraft: (id, aiDraft) => updateArticle(set, get, id, { aiDraft }),
+      setStyleAnalysis: (id, analysis) => updateArticle(set, get, id, { styleAnalysis: analysis }),
 
       addMaterial: (articleId, content, type) => {
-        const material: Material = {
-          id: nanoid(),
-          content,
-          type,
-          createdAt: new Date(),
-        };
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === articleId
-              ? { ...a, materials: [...a.materials, material], updatedAt: new Date() }
-              : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === articleId
-                ? { ...state.currentArticle, materials: [...state.currentArticle.materials, material], updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
+        const material: Material = { id: nanoid(), content, type, createdAt: new Date() };
+        updateArticle(set, get, articleId, (a) => ({
+          ...a,
+          materials: [...a.materials, material],
+        }));
       },
 
       removeMaterial: (articleId, materialId) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === articleId
-              ? { ...a, materials: a.materials.filter((m) => m.id !== materialId), updatedAt: new Date() }
-              : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === articleId
-                ? { ...state.currentArticle, materials: state.currentArticle.materials.filter((m) => m.id !== materialId), updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
+        updateArticle(set, get, articleId, (a) => ({
+          ...a,
+          materials: a.materials.filter((m) => m.id !== materialId),
+        }));
       },
 
       addInterviewEntry: (articleId, round, question, answer) => {
-        const entry: InterviewEntry = {
-          id: nanoid(),
-          round,
-          question,
-          answer,
-          createdAt: new Date(),
-        };
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === articleId
-              ? { ...a, interviews: [...a.interviews, entry], updatedAt: new Date() }
-              : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === articleId
-                ? { ...state.currentArticle, interviews: [...state.currentArticle.interviews, entry], updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
+        const entry: InterviewEntry = { id: nanoid(), round, question, answer, createdAt: new Date() };
+        updateArticle(set, get, articleId, (a) => ({
+          ...a,
+          interviews: [...a.interviews, entry],
+        }));
       },
 
-      setTheme: (articleId, theme) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === articleId ? { ...a, theme, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === articleId
-                ? { ...state.currentArticle, theme, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      setStructure: (articleId, structure) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === articleId ? { ...a, structure, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === articleId
-                ? { ...state.currentArticle, structure, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      setAiDraft: (id, aiDraft) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, aiDraft, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, aiDraft, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
-      },
-
-      setStyleAnalysis: (id, analysis) => {
-        set((state) => {
-          const articles = state.articles.map((a) =>
-            a.id === id ? { ...a, styleAnalysis: analysis, updatedAt: new Date() } : a
-          );
-          debouncedSync(articles);
-          return {
-            articles,
-            currentArticle:
-              state.currentArticle?.id === id
-                ? { ...state.currentArticle, styleAnalysis: analysis, updatedAt: new Date() }
-                : state.currentArticle,
-          };
-        });
+      addFeedback: (id, target, rating, reason) => {
+        const entry = { id: nanoid(), target, rating, reason, createdAt: new Date() };
+        updateArticle(set, get, id, (a) => ({
+          ...a,
+          feedback: [...a.feedback, entry],
+        }));
       },
 
       loadFromServer: async () => {
@@ -332,7 +228,6 @@ export const useArticleStore = create<ArticleState>()(
           const revived = reviveDates(serverArticles);
           const local = get().articles;
 
-          // 合并：服务端有而本地没有的 → 加进来；两边都有的 → 取更新的
           const merged = [...revived];
           for (const localArt of local) {
             const existing = merged.find((a) => a.id === localArt.id);
@@ -353,6 +248,7 @@ export const useArticleStore = create<ArticleState>()(
       deleteArticle: (id) => {
         set((state) => {
           const articles = state.articles.filter((a) => a.id !== id);
+          dirtyIds.delete(id);
           return {
             articles,
             currentArticle: state.currentArticle?.id === id ? null : state.currentArticle,

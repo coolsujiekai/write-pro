@@ -45,6 +45,7 @@ export interface CrossArticlePatterns {
 export const MAX_INSIGHTS = 20;
 
 /** 时效权重 */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getAgeWeight(index: number, total: number): { weight: number; ageGroup: 'recent' | 'mid' | 'old' } {
   // 倒序：index 0 = 最新
   if (index < 3) return { weight: 1.0, ageGroup: 'recent' };

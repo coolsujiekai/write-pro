@@ -14,8 +14,10 @@ interface FinalOutputProps {
 }
 
 export function FinalOutput({ article }: FinalOutputProps) {
-  const { setPhase, setStyleAnalysis } = useArticleStore();
-  const { addInsight, insights } = useStyleMemoryStore();
+  const setPhase = useArticleStore((s) => s.setPhase);
+  const setStyleAnalysis = useArticleStore((s) => s.setStyleAnalysis);
+  const addInsight = useStyleMemoryStore((s) => s.addInsight);
+  const insights = useStyleMemoryStore((s) => s.insights);
   const provider = useSettingsStore((s) => s.provider);
   const router = useRouter();
 
@@ -33,21 +35,11 @@ export function FinalOutput({ article }: FinalOutputProps) {
   // 已有缓存分析结果 → 直接使用；否则触发分析
   const cached = article.styleAnalysis;
 
-  useEffect(() => {
-    if (article.currentPhase === 8 && !cached && !isAnalyzing) {
-      runAnalysis();
-    }
-  }, [article.currentPhase, cached, isAnalyzing]);
+  function hasAiDiff(): boolean {
+    return !!(hasAiDraft && article.content.replace(/<[^>]*>/g, '').length > 50);
+  }
 
-  const runAnalysis = async (force = false) => {
-    setIsAnalyzing(true);
-    setError('');
-
-    // 强制重新分析时，先清除已缓存的结果
-    if (force && cached) {
-      setStyleAnalysis(article.id, null);
-    }
-
+  const doAnalysis = async () => {
     try {
       // 构建已有风格上下文，让 AI 在此基础上深化
       const recentInsights = insights.slice(-3);
@@ -58,7 +50,7 @@ export function FinalOutput({ article }: FinalOutputProps) {
         : undefined;
 
       const action = hasAiDiff() ? 'analyze-diff' : 'analyze-style';
-      const payload = hasAiDiff()
+      const payload = action === 'analyze-diff'
         ? { action: 'analyze-diff', data: { aiDraft: article.aiDraft, userVersion: article.content, title: article.title || '未命名', existingStyle } }
         : { action: 'analyze-style', data: { content: article.content, title: article.title || '未命名', existingStyle } };
 
@@ -112,9 +104,17 @@ export function FinalOutput({ article }: FinalOutputProps) {
     }
   };
 
-  function hasAiDiff(): boolean {
-    return !!(hasAiDraft && article.content.replace(/<[^>]*>/g, '').length > 50);
-  }
+  useEffect(() => {
+    if (article.currentPhase === 8 && !cached && !isAnalyzing) {
+      void (async () => {
+        setIsAnalyzing(true);
+        setError('');
+        setStyleAnalysis(article.id, null);
+        await doAnalysis();
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article.currentPhase]);
 
   if (article.currentPhase === 7) {
     return (
@@ -209,7 +209,12 @@ export function FinalOutput({ article }: FinalOutputProps) {
             )}
             {!isAnalyzing && (
               <button
-                onClick={() => runAnalysis(true)}
+                onClick={async () => {
+                  setIsAnalyzing(true);
+                  setError('');
+                  setStyleAnalysis(article.id, null);
+                  await doAnalysis();
+                }}
                 className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:underline"
               >
                 重新分析
@@ -229,7 +234,7 @@ export function FinalOutput({ article }: FinalOutputProps) {
         {error && (
           <div className="flex items-center justify-between">
             <p className="text-xs text-red-500">{error}</p>
-            <button onClick={() => runAnalysis(true)} className="text-xs text-blue-600 hover:underline">
+            <button onClick={async () => { setIsAnalyzing(true); setError(''); await doAnalysis(); }} className="text-xs text-blue-600 hover:underline">
               重试
             </button>
           </div>

@@ -6,11 +6,15 @@ import { useRouter } from 'next/navigation';
 import { PHASES } from '@/lib/workflow/types';
 import { useState, useEffect, useMemo } from 'react';
 import { SettingsModal } from '@/components/ui/SettingsModal';
-import type { Article } from '@/lib/workflow/types';
+import { Navbar } from '@/components/ui/Navbar';
+import { ArticleDetail } from '@/components/ui/ArticleDetail';
 
 export default function HomePage() {
-  const { articles, createArticle, loadFromServer, deleteArticle } = useArticleStore();
-  const { loadFromServer: loadStyleMemory } = useStyleMemoryStore();
+  const articles = useArticleStore((s) => s.articles);
+  const createArticle = useArticleStore((s) => s.createArticle);
+  const loadFromServer = useArticleStore((s) => s.loadFromServer);
+  const deleteArticle = useArticleStore((s) => s.deleteArticle);
+  const loadStyleMemory = useStyleMemoryStore((s) => s.loadFromServer);
   const router = useRouter();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -79,11 +83,10 @@ export default function HomePage() {
   const detailArticle = detailId ? articles.find((a) => a.id === detailId) : null;
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      <header className="border-b border-[var(--border)] px-6 py-4">
-        <div className="mx-auto max-w-4xl flex items-center justify-between">
-          <h1 className="text-xl font-bold">Write Pro</h1>
-          <div className="flex items-center gap-2">
+    <div className="flex flex-1 flex-col bg-[var(--background)]">
+      <Navbar
+        actions={
+          <>
             <button
               onClick={() => setSettingsOpen(true)}
               className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--muted-foreground)] hover:bg-[var(--muted)] transition-colors"
@@ -96,11 +99,11 @@ export default function HomePage() {
             >
               新建文章
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <main className="mx-auto max-w-4xl px-6 py-8">
+      <div className="mx-auto w-full max-w-4xl px-6 py-8">
         {articles.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-[var(--muted-foreground)] text-lg mb-4">还没有文章</p>
@@ -187,98 +190,10 @@ export default function HomePage() {
             </div>
           </>
         )}
-      </main>
+      </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
 
-function ArticleDetail({
-  article,
-  onEdit,
-  onExport,
-  onDelete,
-}: {
-  article: Article;
-  onEdit: () => void;
-  onExport: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-[var(--border)] p-4 space-y-4 sticky top-8">
-      <h3 className="font-medium text-sm">{article.title || '未命名文章'}</h3>
-
-      {/* 基本信息 */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <span className="text-[var(--muted-foreground)]">阶段</span>
-          <p>{PHASES[article.currentPhase - 1].name}</p>
-        </div>
-        <div>
-          <span className="text-[var(--muted-foreground)]">平台</span>
-          <p>{article.platform === 'wechat' ? '公众号' : article.platform === 'xiaohongshu' ? '小红书' : '知乎'}</p>
-        </div>
-        <div>
-          <span className="text-[var(--muted-foreground)]">字数</span>
-          <p>{article.content.length}</p>
-        </div>
-        <div>
-          <span className="text-[var(--muted-foreground)]">素材</span>
-          <p>{article.materials.length} 条</p>
-        </div>
-      </div>
-
-      {/* 主题 */}
-      {article.theme && (
-        <div className="text-xs">
-          <span className="text-[var(--muted-foreground)]">主题</span>
-          <p className="mt-1">{article.theme.oneSentence}</p>
-          {article.theme.coreMessage && (
-            <p className="text-[var(--muted-foreground)] mt-1">核心：{article.theme.coreMessage}</p>
-          )}
-        </div>
-      )}
-
-      {/* 采访摘要 */}
-      {article.interviews.length > 0 && (
-        <div className="text-xs">
-          <span className="text-[var(--muted-foreground)]">采访记录 ({article.interviews.length} 条)</span>
-          <div className="mt-1 space-y-1 max-h-32 overflow-y-auto">
-            {article.interviews.slice(0, 3).map((i) => (
-              <div key={i.id} className="border-l-2 border-[var(--border)] pl-2">
-                <p className="text-[var(--muted-foreground)]">{i.question}</p>
-                <p>{i.answer.slice(0, 50)}{i.answer.length > 50 ? '...' : ''}</p>
-              </div>
-            ))}
-            {article.interviews.length > 3 && (
-              <p className="text-[var(--muted-foreground)]">还有 {article.interviews.length - 3} 条...</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 操作按钮 */}
-      <div className="flex gap-2">
-        <button
-          onClick={onEdit}
-          className="flex-1 rounded bg-[var(--primary)] px-3 py-1.5 text-xs text-white"
-        >
-          继续编辑
-        </button>
-        <button
-          onClick={onExport}
-          className="rounded border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
-        >
-          导出 MD
-        </button>
-        <button
-          onClick={onDelete}
-          className="rounded border border-red-200 px-3 py-1.5 text-xs text-red-500 hover:bg-red-50"
-        >
-          删除
-        </button>
-      </div>
-    </div>
-  );
-}

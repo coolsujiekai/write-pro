@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Article } from '@/lib/workflow/types';
 import { useArticleStore } from '@/stores/article-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useStyleMemoryStore } from '@/stores/style-memory-store';
+import { Feedback } from '@/components/ui/Feedback';
 
 interface DraftReviewProps {
   article: Article;
@@ -13,7 +14,9 @@ interface DraftReviewProps {
 type GenerateStep = 'idle' | 'generating' | 'polishing' | 'done';
 
 export function DraftReview({ article }: DraftReviewProps) {
-  const { setPhase, updateContent, setAiDraft } = useArticleStore();
+  const setPhase = useArticleStore((s) => s.setPhase);
+  const updateContent = useArticleStore((s) => s.updateContent);
+  const setAiDraft = useArticleStore((s) => s.setAiDraft);
   const provider = useSettingsStore((s) => s.provider);
   const getStylePrompt = useStyleMemoryStore((s) => s.getStylePrompt);
   const [step, setStep] = useState<GenerateStep>('idle');
@@ -21,12 +24,26 @@ export function DraftReview({ article }: DraftReviewProps) {
   const [checkResult, setCheckResult] = useState<{ score: number; issues: { text: string; suggestion: string }[]; summary: string } | null>(null);
   const [error, setError] = useState('');
   const [polishSummary, setPolishSummary] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [searchAnswer, setSearchAnswer] = useState('');
+  const [styleRec, setStyleRec] = useState<{ author: string; reason: string; handbookId: string | null } | null>(null);
+  const [styleHandbook, setStyleHandbook] = useState<string | null>(null);
+  const [isRecommendingStyle, setIsRecommendingStyle] = useState(false);
+  const autoCheckRef = useRef(false);
 
   const wordCount = article.content.replace(/<[^>]*>/g, '').length;
 
   const generateAndPolish = async () => {
     setError('');
     setPolishSummary('');
+
+    // 合并素材和搜索结果
+    const allMaterials = [...article.materials.map((m) => m.content)];
+    if (searchResults.length > 0) {
+      allMaterials.push('【搜索补充素材】');
+      allMaterials.push(...searchResults);
+    }
 
     try {
       // 第一步：生成初稿
@@ -39,11 +56,12 @@ export function DraftReview({ article }: DraftReviewProps) {
           data: {
             title: article.title,
             theme: article.theme,
-            materials: article.materials.map((m) => m.content),
+            materials: allMaterials,
             interviews: article.interviews.map((i) => ({ q: i.question, a: i.answer })),
             structure: article.content,
             platform: article.platform,
             stylePrompt: getStylePrompt(),
+            styleHandbook: styleHandbook ?? undefined,
           },
         }),
       });
@@ -94,6 +112,52 @@ export function DraftReview({ article }: DraftReviewProps) {
     }
   };
 
+  const searchMaterials = async () => {
+    setIsSearching(true);
+    setError('');
+    try {
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'search-materials',
+          data: {
+            query: article.theme?.oneSentence ?? article.title ?? '',
+            topic: article.title ?? '',
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || '搜索失败');
+      }
+
+      const data = await res.json();
+      if (data.message) {
+        setError(data.message);
+        setSearchResults([]);
+      } else {
+        setSearchResults(data.materials ?? []);
+        setSearchAnswer(data.answer ?? '');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '搜索失败');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const enableStyle = async () => {
+    if (!styleRec?.handbookId) return;
+    try {
+      const res = await fetch(`/api/library?id=${styleRec.handbookId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setStyleHandbook(data.content);
+    } catch { /* silent fail */ }
+  };
+
   const checkAI = async () => {
     setIsChecking(true);
     setError('');
@@ -121,6 +185,48 @@ export function DraftReview({ article }: DraftReviewProps) {
     }
   };
 
+  // Phase F: Auto-recommend style on Phase 5 idle
+  useEffect(() => {
+    if (article.currentPhase !== 5 || step !== 'idle' || styleRec || isRecommendingStyle) return;
+    const theme = article.theme?.oneSentence ?? article.title ?? '';
+    if (!theme && article.materials.length === 0) return;
+
+    let cancelled = false;
+    const run = async () => {
+      setIsRecommendingStyle(true);
+      try {
+        const res = await fetch('/api/library', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recommend-style',
+            theme,
+            materials: article.materials.map((m) => m.content),
+          }),
+        });
+        if (cancelled) return;
+        const data = await res.json();
+        if (data.author && !cancelled) {
+          setStyleRec({ author: data.author, reason: data.reason, handbookId: data.handbookId });
+        }
+      } catch { /* optional feature, silent fail */ }
+      finally {
+        if (!cancelled) setIsRecommendingStyle(false);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [article.currentPhase, step, article.theme?.oneSentence, article.title, article.materials, styleRec, isRecommendingStyle]);
+
+  // Phase G: Auto AI taste check after draft is done
+  useEffect(() => {
+    if (article.currentPhase !== 6 || step !== 'done' || checkResult || isChecking || autoCheckRef.current) return;
+    if (wordCount < 50) return;
+    autoCheckRef.current = true;
+    void (async () => { await checkAI(); })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article.currentPhase, step]);
+
   if (article.currentPhase === 5) {
     return (
       <div className="space-y-4">
@@ -132,6 +238,68 @@ export function DraftReview({ article }: DraftReviewProps) {
             AI 会先生成初稿，再自动打磨去除 AI 味，然后交给你修改。
           </p>
         </div>
+
+        {/* Phase F: Style recommendation */}
+        {(isRecommendingStyle || styleRec) && (
+          <div className="rounded-lg border border-dashed border-[var(--primary)]/30 p-3">
+            {isRecommendingStyle ? (
+              <p className="text-xs text-[var(--muted-foreground)] animate-pulse">正在从知识库推荐写作风格...</p>
+            ) : styleRec && (
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-[var(--muted-foreground)]">推荐风格</p>
+                  <p className="text-sm font-medium">{styleRec.author} — {styleRec.reason}</p>
+                </div>
+                {styleHandbook ? (
+                  <span className="text-xs text-green-600 shrink-0">✓ 已启用</span>
+                ) : styleRec.handbookId ? (
+                  <button
+                    onClick={enableStyle}
+                    className="text-xs text-[var(--primary)] hover:underline shrink-0"
+                  >
+                    启用
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 搜索补充素材 — 放在生成前，搜完自动融入 */}
+        {step === 'idle' && (
+          <div className="border-t border-[var(--border)] pt-3">
+            <button
+              onClick={searchMaterials}
+              disabled={isSearching}
+              className="w-full rounded-lg border border-dashed border-[var(--border)] px-4 py-2.5 text-sm text-[var(--muted-foreground)] hover:bg-[var(--muted)] disabled:opacity-50"
+            >
+              {isSearching ? '正在搜索...' : '🔍 搜索补充素材（金句、案例、数据）'}
+            </button>
+            {searchResults.length > 0 && (
+              <p className="text-xs text-green-600 mt-1.5">
+                ✓ 找到 {searchResults.length} 条素材，生成初稿时会自动融入
+              </p>
+            )}
+
+            {searchResults.length > 0 && (
+              <div className="mt-2 space-y-1.5 max-h-36 overflow-y-auto">
+                {searchAnswer && (
+                  <div className="rounded bg-blue-50 border border-blue-100 p-1.5">
+                    <p className="text-xs text-blue-800">{searchAnswer}</p>
+                  </div>
+                )}
+                {searchResults.slice(0, 3).map((r, i) => (
+                  <div key={i} className="rounded border border-[var(--border)] p-1.5 text-xs text-[var(--muted-foreground)] truncate">
+                    {r.split('\n')[0]}
+                  </div>
+                ))}
+                {searchResults.length > 3 && (
+                  <p className="text-xs text-[var(--muted-foreground)]">还有 {searchResults.length - 3} 条...</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* AI 生成按钮 / 进度 */}
         {step === 'idle' && (
@@ -169,7 +337,10 @@ export function DraftReview({ article }: DraftReviewProps) {
 
         {step === 'done' && (
           <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-            <p className="text-sm text-green-800">✓ {polishSummary}</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-green-800">✓ {polishSummary}</p>
+              <Feedback articleId={article.id} target="draft" />
+            </div>
             <p className="text-xs text-green-700 mt-1">初稿已写入编辑器，你可以直接修改。</p>
           </div>
         )}
@@ -239,11 +410,14 @@ export function DraftReview({ article }: DraftReviewProps) {
         <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">检查结果</h3>
-            <span className={`text-sm font-bold ${
+            <div className="flex items-center gap-2">
+              <Feedback articleId={article.id} target="check-ai" />
+              <span className={`text-sm font-bold ${
               checkResult.score >= 80 ? 'text-green-600' : checkResult.score >= 60 ? 'text-yellow-600' : 'text-red-600'
             }`}>
               {checkResult.score} 分
             </span>
+            </div>
           </div>
           <p className="text-xs text-[var(--muted-foreground)]">{checkResult.summary}</p>
           {checkResult.issues.length > 0 && (

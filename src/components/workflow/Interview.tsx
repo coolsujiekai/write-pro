@@ -2,19 +2,24 @@
 
 import { useState, useEffect } from 'react';
 import type { Article } from '@/lib/workflow/types';
+import { getPhaseDefinition } from '@/lib/workflow/types';
 import { useArticleStore } from '@/stores/article-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { Feedback } from '@/components/ui/Feedback';
+import type { LibraryIndex } from '@/lib/library/types';
 
 interface InterviewProps {
   article: Article;
+  matchedItems?: LibraryIndex[];
 }
 
-export function Interview({ article }: InterviewProps) {
+export function Interview({ article, matchedItems }: InterviewProps) {
   const [answer, setAnswer] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const { addInterviewEntry, setPhase } = useArticleStore();
+  const addInterviewEntry = useArticleStore((s) => s.addInterviewEntry);
+  const setPhase = useArticleStore((s) => s.setPhase);
   const provider = useSettingsStore((s) => s.provider);
 
   const answeredCount = article.interviews.length;
@@ -41,6 +46,7 @@ export function Interview({ article }: InterviewProps) {
             materials: article.materials.map((m) => m.content),
             previousAnswers: article.interviews.flatMap((i) => [`Q: ${i.question}`, `A: ${i.answer}`]),
             round,
+            matchedItems: matchedItems?.map((m) => ({ title: m.title, author: m.author, filePath: m.filePath })),
           },
         }),
       });
@@ -64,8 +70,9 @@ export function Interview({ article }: InterviewProps) {
   // 初始加载第一个问题
   useEffect(() => {
     if (!currentQuestion && answeredCount === 0) {
-      fetchQuestion();
+      void (async () => { await fetchQuestion(); })();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSubmit = async () => {
@@ -87,10 +94,10 @@ export function Interview({ article }: InterviewProps) {
       {answeredCount === 0 && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
           <p className="text-sm text-amber-900 leading-relaxed">
-            好的，我们来聊聊。我会根据你的素材问你问题，帮你把想法理清楚。
+            {getPhaseDefinition(2)?.startMessage ?? '我来问几个问题，帮你理清思路。'}
           </p>
           <p className="text-sm text-amber-800 mt-2 leading-relaxed">
-            不用想太多，想到什么说什么。说"跳过"就跳过。
+            不用想太多，想到什么说什么。说&ldquo;跳过&rdquo;就跳过。
           </p>
         </div>
       )}
@@ -144,7 +151,10 @@ export function Interview({ article }: InterviewProps) {
               <p className="text-xs text-red-500 mt-1">AI 连接失败，使用默认问题</p>
             </div>
           ) : (
-            <p className="text-sm text-amber-900 font-medium leading-relaxed">{currentQuestion}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm text-amber-900 font-medium leading-relaxed flex-1">{currentQuestion}</p>
+              <Feedback articleId={article.id} target="interview" />
+            </div>
           )}
           <p className="text-xs text-amber-700 mt-2">
             按 ⌘+Enter 提交

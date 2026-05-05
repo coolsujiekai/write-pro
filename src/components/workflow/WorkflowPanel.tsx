@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Article, PhaseId } from '@/lib/workflow/types';
 import { PHASES } from '@/lib/workflow/types';
+import type { LibraryIndex } from '@/lib/library/types';
 import { MaterialIntake } from './MaterialIntake';
 import { Interview } from './Interview';
 import { ThemeConfirm } from './ThemeConfirm';
@@ -12,25 +13,17 @@ import { FinalOutput } from './FinalOutput';
 
 interface WorkflowPanelProps {
   article: Article;
-  onPhaseChange?: (phase: PhaseId) => void;
 }
 
-const PHASE_COMPONENTS: Record<PhaseId, React.ComponentType<{ article: Article }>> = {
-  1: MaterialIntake,
-  2: Interview,
-  3: ThemeConfirm,
-  4: StructurePlan,
-  5: DraftReview,
-  6: DraftReview,
-  7: FinalOutput,
-  8: FinalOutput,
-};
+export function WorkflowPanel({ article }: WorkflowPanelProps) {
+  const [extraOpenPhases, setExtraOpenPhases] = useState<Set<PhaseId>>(new Set());
+  const [matchedItems, setMatchedItems] = useState<LibraryIndex[]>([]);
 
-export function WorkflowPanel({ article, onPhaseChange }: WorkflowPanelProps) {
-  const [openPhases, setOpenPhases] = useState<Set<PhaseId>>(new Set([article.currentPhase]));
+  const openPhases = new Set([article.currentPhase, ...extraOpenPhases]);
 
   const togglePhase = (phaseId: PhaseId) => {
-    setOpenPhases((prev) => {
+    if (phaseId === article.currentPhase) return;
+    setExtraOpenPhases((prev) => {
       const next = new Set(prev);
       if (next.has(phaseId)) {
         next.delete(phaseId);
@@ -86,7 +79,6 @@ export function WorkflowPanel({ article, onPhaseChange }: WorkflowPanelProps) {
       {Array.from(openPhases)
         .sort((a, b) => a - b)
         .map((phaseId) => {
-          const PhaseComponent = PHASE_COMPONENTS[phaseId];
           const phase = PHASES.find((p) => p.id === phaseId)!;
 
           return (
@@ -109,7 +101,12 @@ export function WorkflowPanel({ article, onPhaseChange }: WorkflowPanelProps) {
                 </button>
               </div>
               <div className="p-4">
-                <PhaseComponent article={article} />
+                {phaseId === 1 && <MaterialIntake article={article} onMatchedItemsChange={setMatchedItems} />}
+                {phaseId === 2 && <Interview article={article} matchedItems={matchedItems} />}
+                {phaseId === 3 && <ThemeConfirm article={article} />}
+                {phaseId === 4 && <StructurePlan article={article} matchedItems={matchedItems} />}
+                {(phaseId === 5 || phaseId === 6) && <DraftReview article={article} />}
+                {(phaseId === 7 || phaseId === 8) && <FinalOutput article={article} />}
               </div>
             </div>
           );

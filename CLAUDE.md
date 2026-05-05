@@ -1,142 +1,135 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
-本文件为 Claude Code（claude.ai/code）及同类助手在本仓库中协作时的说明；与代码不一致时以仓库为准。
+本文件为 Claude Code 在本仓库中协作时的说明；与代码不一致时以仓库为准。
 
 ## 项目概览
 
-Write Pro 是写作平台，包含：
+Write Pro 是面向中文创作者的 AI 辅助写作平台，覆盖从素材收集到多平台排版的完整流程。
 
-1. **Hermes Agent Skill**（`hermes-skill/`）— Markdown 行为定义，覆盖 8 阶段写作流程。
-2. **Web 前端**（`src/`）— Next.js 编辑器、流程 UI、多平台排版。
-
-## 运行环境
-
-- **推荐**：Node.js **20 LTS 及以上**（与 `@types/node` 一致）；本地开发亦可在 **23.x** 下运行。
-- **包管理**：npm（`package-lock.json`）。
-- **npm 镜像**：国内可使用 `https://registry.npmmirror.com`（可选，非强制）。
-
-## 架构与目录
-
-```
-write-pro/
-├── hermes-skill/                    # Hermes Skill（可与外部部署目录软链）
-│   ├── DESCRIPTION.md
-│   └── writing-assistant/
-│       ├── SKILL.md                 # 8 阶段流程定义
-│       └── references/
-├── src/
-│   ├── app/
-│   │   ├── page.tsx                 # 首页 / 文章列表
-│   │   ├── write/[id]/page.tsx      # 写作主界面（编辑器 + 流程）
-│   │   ├── format/[id]/page.tsx     # 排版预览（HTML → 各平台）
-│   │   └── api/
-│   │       ├── ai/route.ts          # AI：采访、主题、草稿、润色等（POST JSON）
-│   │       ├── articles/route.ts    # 文章 CRUD：GET 列表 / POST 保存 / DELETE
-│   │       ├── articles/export/route.ts  # 导出 Markdown（POST `{ id }`）
-│   │       ├── settings/route.ts    # AI 配置读写（GET 脱敏 / POST 保存）
-│   │       └── style-memory/route.ts # 风格记忆持久化（GET/POST）
-│   ├── components/
-│   │   ├── editor/                  # Tiptap、工具栏
-│   │   ├── workflow/                # 各阶段流程 UI
-│   │   └── ui/                      # 设置、平台选择等
-│   ├── lib/
-│   │   ├── ai/                      # 多厂商 AI 客户端、config.json
-│   │   ├── format/                  # Markdown → HTML、juice、各平台适配
-│   │   ├── storage/article-files.ts # 文章落盘
-│   │   └── workflow/                # 类型与状态机
-│   └── stores/                      # Zustand
-├── 作品/                            # 运行时生成：每篇文章一个 JSON（勿提交密钥）
-├── package.json
-├── tsconfig.json
-└── next.config.ts
-```
-
-## 数据流（简要）
-
-- **编辑器正文**：以 **HTML** 存于文章模型中的 `content`，经排版管线转为各平台格式。
-- **持久化**：服务端将文章写入项目根目录下的 **`作品/`**，单文件 JSON；列表与读写走 **`/api/articles`**。
-- **排版**：从写作页进入 **`/format/[id]`**，使用 `src/lib/format/` 与各 `platforms/` 实现。
-
-## 关键架构模式
-
-以下模式从代码中不易一眼看出，修改相关代码时需注意：
-
-### 双重持久化
-
-数据同时存在于 **localStorage**（Zustand persist）和**服务端文件系统**（`作品/`）。每次 store 变更会 1 秒防抖后 `POST /api/articles` 同步到服务端。加载时按 `updatedAt` 时间戳合并：服务端优先，本地更新则本地胜出。
-
-### AI 路由分发
-
-`/api/ai` 是单一路由，通过 `action` 字段分发到 8 个处理器（interview、suggest-theme、generate-draft、check-ai、rewrite、polish-draft、analyze-style、analyze-diff）。AI 返回的 JSON 常有格式问题，`extractJson()` 会处理 markdown 围栏、中文引号、尾逗号和花括号匹配。
-
-### 内容格式二元性
-
-编辑器存 **HTML**（Tiptap 输出），AI 生成 **Markdown**。草稿生成管线在写入编辑器前通过 `markdownToHtml()` 转换。导出时再用正则从 HTML 转回 Markdown。
-
-### 风格学习闭环
-
-Phase 8 分析 AI 草稿与用户修改的差异，构建持久化风格画像。该画像通过 `stylePrompt` 注入未来的 `generate-draft` 调用，跨文章积累写作风格。
-
-### 平台写作规则
-
-各平台（公众号/小红书/知乎）的 AI 写作规则硬编码在 `handleGenerateDraft` 和 `handlePolishDraft` 中，非配置化模板。
-
-## AI 配置与环境变量
-
-- **模板**：复制 **`.env.example`** 为 `.env.local`（勿把真实 Key 写入仓库）。
-- **优先级**（与 `src/lib/ai/client.ts` 一致）：请求头 **`X-AI-Provider`** 可指定厂商；否则使用 **`src/lib/ai/config.json`** 里第一个已配置 Key 的 provider；再否则回退 **环境变量**（MiMo → Anthropic → OpenAI）。
-- **MiMo**：`MIMO_API_KEY`，可选 `MIMO_BASE_URL`、`MIMO_MODEL`。
-- **Anthropic**：`ANTHROPIC_API_KEY`。
-- **OpenAI**：`OPENAI_API_KEY`。
-- **设置 UI**：通过 **`/api/settings`** 持久化到 `src/lib/ai/config.json`；GET 仅返回是否已配置 Key（脱敏）。
-
-未配置任何 Key 时，调用 AI 会报错提示在设置中配置。
-
-## 技术栈
-
-- **框架**：Next.js 16（App Router）、TypeScript、React 19。
-- **编辑器**：Tiptap（ProseMirror）。
-- **样式**：Tailwind CSS v4。
-- **状态**：Zustand。
-- **排版**：markdown-it、juice（公众号等需 inline styles）。
+- **Hermes Skill**（`hermes-skill/writing-assistant/`）— 8 阶段写作流程的规范定义
+- **Web 前端**（`src/`）— Next.js 16 App Router、Tiptap 编辑器、流程 UI、多平台排版
 
 ## 开发命令
 
 ```bash
-npm run dev      # next dev
-npm run build    # next build（生产构建）
-npm run start    # 生产环境启动
-npm run lint     # ESLint
+npm run dev          # next dev（端口默认 3000）
+npm run build        # 生产构建
+npm run start        # 生产启动
+npm run lint         # ESLint
+npm test             # vitest run（39 tests）
+npm run test:watch   # vitest（监视模式）
+npm run test:coverage # vitest + 覆盖率
 ```
 
-当前 **未配置** `npm test`；新增测试时可在此补充命令。
+## 技术栈
 
-## 已知问题
+Next.js 16 (App Router) · TypeScript 5 · React 19 · Tiptap (ProseMirror) · Zustand v5 · Tailwind CSS v4 · markdown-it + juice · Vitest + jsdom
 
-- 开发与构建均依赖 SWC 原生绑定（如 `@next/swc-darwin-arm64`）。若二进制损坏或架构不匹配，可删除 `node_modules` 与 npm 缓存后重装。
-- `next.config.ts` 可能对 dev/prod  bundler 有约定；若 dev 与 build 表现不一致，对照官方文档与本地配置排查。
-- **`src/lib/ai/config.json` 已提交到仓库**，当前包含真实的 MiMo API Key。修改 AI 配置时注意不要意外泄露。
-- 所有 API 路由无认证，仅限本地开发使用。
-- 存储层使用同步 `fs` 操作（`readFileSync`/`writeFileSync`），会阻塞事件循环。
+## 架构
 
-## 开发提示
+### 页面路由
 
-- 路径别名：`@/*` 映射到 `./src/*`（tsconfig.json）。
-- 无测试框架：当前未配置 jest/vitest/playwright，`npm test` 不可用。
-- Tailwind CSS v4 使用 CSS-based 配置，非 v3 的 `tailwind.config.js`。
-- Zustand v5 API：使用 `create` from `zustand`，非旧版 default export。
-- Phase 跳转：状态机定义严格顺序转换，但 UI 通过 `setPhase()` 允许跳过阶段。
+| 路由 | 文件 | 说明 |
+|------|------|------|
+| `/` | `src/app/page.tsx` | 文章列表（含搜索/平台筛选） |
+| `/write/[id]` | `src/app/write/[id]/page.tsx` | 写作主界面（左侧编辑器 + 右侧流程面板） |
+| `/format/[id]` | `src/app/format/[id]/page.tsx` | 多平台排版预览 |
 
-## 开发注意事项
+### API 路由
 
-- 文案与产品语境：**中文**，面向中文内容创作者。
-- **公众号**：排版依赖 **inline styles**（juice）。
-- **小红书**：短文 + 标签 + 封面文案模式（见各 platform 实现）。
-- **Hermes Skill**：可与仓库内 `hermes-skill/` 保持一致；对外部署时常用 **软链** 指向统一 Skill 目录。
+`/api/ai` — 单一路由，通过 `action` 字段分发到 9 个 handler：
 
-## 与 IDE 规则的关系
+| action | 用途 | 模型 tier |
+|--------|------|-----------|
+| `interview` | 生成采访问题 | light |
+| `suggest-theme` | 建议主题 | light |
+| `generate-draft` | 生成初稿 | standard |
+| `check-ai` | 检查 AI 味 | light |
+| `rewrite` | 按指令改写 | standard |
+| `polish-draft` | 四视角打磨（读者/编辑/风格/平台） | standard |
+| `analyze-style` | 分析写作风格 | standard |
+| `analyze-diff` | 对比 AI 初稿与用户修改 | standard |
+| `search-materials` | 搜索互联网素材 | 无 AI（Tavily/Bocha） |
 
-仓库中无 `.cursor/rules`、`.cursorrules` 或 `.github/copilot-instructions.md`。若将来添加 IDE 专用规则，与本文件冲突时：**以可执行的代码与 `package.json` 为准**，并同步更新文档以免助手误判。
+`/api/articles` — GET 列表 / POST 保存（含 `sendBeacon` 兜底）/ DELETE 删除
 
+`/api/settings` — GET 脱敏读取 / POST 保存 AI 配置 + 搜索配置到 `src/lib/ai/config.json`
+
+`/api/style-memory` — 风格记忆的服务端持久化
+
+### 关键架构模式
+
+**布局系统** — root layout (`layout.tsx`) 集成共享 Footer，各页面自行渲染 Navbar 并通过 props 传递页面特定操作（actions/backTo）。写作用页使用 `flex flex-col flex-1` 适配 sidebar + editor 的三栏布局。
+
+**双重持久化** — 数据同时存在于 localStorage（Zustand persist）和服务端 `作品/` 目录。store 变更 1s 防抖 `POST /api/articles`。加载时按 `updatedAt` 合并。关闭标签页前 `beforeunload` → `sendBeacon` 兜底。
+
+**内容格式二元性** — 编辑器存 HTML（Tiptap），AI 生成 Markdown。`markdownToHtml()` 做 MD→HTML 写入编辑器；排版管线 `inlineStyles(html, CSS)` 直接处理 HTML（不再经过 MD 中间层）。
+
+**AI 多接口** — 所有 provider 统一走 OpenAI 兼容 `/chat/completions`，仅 baseUrl + model + apiKey 不同。支持流式 SSE + 指数退避重试（3 次）+ 30s 超时。并发限制 3。
+
+**模型分级** — light（mimo-v2.5-mini / deepseek-chat / moonshot-v1-8k / gpt-4o-mini）用于简单任务；standard（mimo-v2.5-pro / deepseek-reasoner / moonshot-v1-32k / gpt-4o）用于生成和润色。
+
+**Prompt 来源** — 去 AI 味规则从 `SKILL.md` 的 `<!-- prompt:no-ai-taste -->` 块加载。平台写作规则从 `references/platform-formats.md` 解析（`src/lib/platform-rules.ts`）。流程阶段定义从 `phases.json` 加载。
+
+**风格学习** — 20 条加权记忆（最近 3 篇权重 1.0，衰减到 0.3），跨文章检测 ironRules（≥3 次 antiPatterns）和 hallmarks（≥3 次 signaturePhrases）。通过 `stylePrompt` 注入未来 generate-draft。
+
+### lib 模块速查
+
+| 路径 | 职责 |
+|------|------|
+| `lib/ai/client.ts` | 多接口 AI 调用（chat + chatStream + 重试） |
+| `lib/ai/config-manager.ts` | config.json 读写（含旧格式迁移） |
+| `lib/ai/token-utils.ts` | 动态 maxTokens 分配 |
+| `lib/ai/concurrency.ts` | 服务端并发限制器（max 3） |
+| `lib/ai/extract-json.ts` | 从 AI 返回中提取 JSON |
+| `lib/search/search-service.ts` | Tavily/Bocha 搜索（优先 config.json → 环境变量） |
+| `lib/platform-rules.ts` | 从 platform-formats.md 解析平台规则 |
+| `lib/skill/prompt-loader.ts` | 从 SKILL.md 解析 prompt 块 |
+| `lib/quality/metrics.ts` | 采纳率/修改率/重写率 + 趋势分析 |
+| `lib/workflow/types.ts` | 全部类型定义、PHASES、getPhaseDefinition() |
+| `lib/workflow/state-machine.ts` | `canTransition()` / `getNextPhase()` |
+| `lib/format/` | markdown↔html、juice inline styles、三平台适配 |
+| `lib/storage/` | 文章 + 风格记忆落盘（fs/promises） |
+
+### 组件速查
+
+| 文件 | 说明 |
+|------|------|
+| `workflow/MaterialIntake.tsx` | Phase 1：素材输入 + 搜索 |
+| `workflow/Interview.tsx` | Phase 2：AI 采访 |
+| `workflow/ThemeConfirm.tsx` | Phase 3：主题确认 |
+| `workflow/StructurePlan.tsx` | Phase 4：结构规划 |
+| `workflow/DraftReview.tsx` | Phase 5-6：生成/搜索/打磨/检查 |
+| `workflow/FinalOutput.tsx` | Phase 7-8：定稿 + 风格分析 + 质量报告 |
+| `ui/SettingsModal.tsx` | AI 配置 + 模型切换 + 搜索 Key 配置 |
+| `ui/Feedback.tsx` | 👍👎 反馈组件（4 个 AI 输出点） |
+| `ui/ErrorBoundary.tsx` | React 错误边界 |
+| `ui/Navbar.tsx` | 共享导航栏（sticky + backdrop-blur），支持 title/actions/backTo props |
+| `ui/Footer.tsx` | 共享极简 Footer（集成在 root layout） |
+| `ui/PlatformSelector.tsx` | 三平台切换控件（公众号/小红书/知乎） |
+
+## AI 配置
+
+**默认 provider**：MiMo。可通过前端设置页切换或 `X-AI-Provider` 请求头指定。
+
+**配置优先级**（`client.ts` 的 `resolveProvider()`）：
+1. 请求指定的 provider（`X-AI-Provider` 头）
+2. config.json 的 `defaultProvider`
+3. 第一个已配 Key 的 provider
+4. 环境变量回退（`MIMO_API_KEY` → `DEEPSEEK_API_KEY` → `KIMI_API_KEY` → `OPENAI_API_KEY`）
+
+**搜索 Key**：在设置页配置，存入 `config.json` 的 `search` 字段。也可用环境变量 `TAVILY_API_KEY` 或 `BOCHA_API_KEY`。
+
+**环境变量**：复制 `.env.example` 为 `.env.local`。目前仅搜索功能需要（AI Key 通过 UI 配）。
+
+## 注意事项
+
+- 路径别名 `@/*` → `./src/*`
+- Zustand v5 API：`create` from `zustand`（非 default export）
+- Tailwind CSS v4 用 CSS-based 配置（无 `tailwind.config.js`）
+- `src/lib/ai/config.json` 在 `.gitignore` 中，不提交。模板在 `config.default.json`
+- 存储层已全部迁移到 `fs/promises`，异步调用
+- 所有 API 路由无认证，仅本地使用
+- Phase 跳转：状态机定义严格顺序，但 UI 允许通过 `setPhase()` 跳过

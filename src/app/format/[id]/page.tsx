@@ -1,18 +1,19 @@
 'use client';
 
 import { useArticleStore } from '@/stores/article-store';
-import { useRouter, useParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { formatForWechat } from '@/lib/format/platforms/wechat';
 import { formatForXiaohongshu } from '@/lib/format/platforms/xiaohongshu';
 import { formatForZhihu } from '@/lib/format/platforms/zhihu';
 import type { Platform } from '@/lib/workflow/types';
 import { PlatformSelector } from '@/components/ui/PlatformSelector';
+import { Navbar } from '@/components/ui/Navbar';
 
 export default function FormatPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
-  const { articles, setCurrentArticle } = useArticleStore();
+  const articles = useArticleStore((s) => s.articles);
+  const setCurrentArticle = useArticleStore((s) => s.setCurrentArticle);
   const [platform, setPlatform] = useState<Platform>('wechat');
   const [copied, setCopied] = useState(false);
 
@@ -105,27 +106,22 @@ export default function FormatPage() {
   };
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => router.push(`/write/${id}`)}
-            className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          >
-            ← 返回编辑
-          </button>
-          <h1 className="text-lg font-medium">{article.title || '排版预览'}</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <PlatformSelector value={platform} onChange={setPlatform} />
-          <button
-            onClick={handleCopy}
-            className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-white hover:bg-[var(--primary-light)] transition-colors"
-          >
-            {copied ? '已复制 ✓' : '一键复制'}
-          </button>
-        </div>
-      </header>
+    <div className="flex flex-1 flex-col">
+      <Navbar
+        backTo={`/write/${id}`}
+        title={article.title || '排版预览'}
+        actions={
+          <>
+            <PlatformSelector value={platform} onChange={setPlatform} />
+            <button
+              onClick={handleCopy}
+              className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-white hover:bg-[var(--primary-light)] transition-colors"
+            >
+              {copied ? '已复制 ✓' : '一键复制'}
+            </button>
+          </>
+        }
+      />
 
       <main className="flex-1 overflow-y-auto p-8">
         <div className="mx-auto max-w-2xl rounded-lg border border-[var(--border)] bg-white p-8 shadow-sm">

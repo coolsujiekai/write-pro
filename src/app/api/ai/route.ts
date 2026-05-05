@@ -4,6 +4,9 @@ import { extractJson } from '@/lib/ai/extract-json';
 import { logger } from '@/lib/logger';
 import { getSharedWritingRules } from '@/lib/skill/prompt-loader';
 import { getMaxTokens } from '@/lib/ai/token-utils';
+import { search } from '@/lib/search/search-service';
+import { aiLimiter } from '@/lib/ai/concurrency';
+import { getPlatformPrompt } from '@/lib/platform-rules';
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -13,33 +16,41 @@ export async function POST(request: NextRequest) {
     const provider = (request.headers.get('X-AI-Provider') ?? undefined) as AIProvider | undefined;
 
     let result: NextResponse;
-    switch (action) {
-      case 'interview':
-        result = await handleInterview(data, provider);
-        break;
-      case 'suggest-theme':
-        result = await handleSuggestTheme(data, provider);
-        break;
-      case 'generate-draft':
-        result = await handleGenerateDraft(data, provider);
-        break;
-      case 'check-ai':
-        result = await handleCheckAI(data, provider);
-        break;
-      case 'rewrite':
-        result = await handleRewrite(data, provider);
-        break;
-      case 'polish-draft':
-        result = await handlePolishDraft(data, provider);
-        break;
-      case 'analyze-style':
-        result = await handleAnalyzeStyle(data, provider);
-        break;
-      case 'analyze-diff':
-        result = await handleAnalyzeDiff(data, provider);
-        break;
-      default:
-        return NextResponse.json({ error: '未知操作' }, { status: 400 });
+    await aiLimiter.acquire();
+    try {
+      switch (action) {
+        case 'interview':
+          result = await handleInterview(data, provider);
+          break;
+        case 'suggest-theme':
+          result = await handleSuggestTheme(data, provider);
+          break;
+        case 'generate-draft':
+          result = await handleGenerateDraft(data, provider);
+          break;
+        case 'check-ai':
+          result = await handleCheckAI(data, provider);
+          break;
+        case 'rewrite':
+          result = await handleRewrite(data, provider);
+          break;
+        case 'polish-draft':
+          result = await handlePolishDraft(data, provider);
+          break;
+        case 'analyze-style':
+          result = await handleAnalyzeStyle(data, provider);
+          break;
+        case 'analyze-diff':
+          result = await handleAnalyzeDiff(data, provider);
+          break;
+        case 'search-materials':
+          result = await handleSearchMaterials(data);
+          break;
+        default:
+          return NextResponse.json({ error: '未知操作' }, { status: 400 });
+      }
+    } finally {
+      aiLimiter.release();
     }
 
     logger.ai(action, {
@@ -55,8 +66,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleInterview(data: { materials: string[]; previousAnswers: string[]; round: number }, provider?: AIProvider) {
-  const { materials, previousAnswers, round } = data;
+async function handleInterview(data: { materials: string[]; previousAnswers: string[]; round: number; matchedItems?: { title: string; author: string; filePath: string }[] }, provider?: AIProvider) {
+  const { materials, previousAnswers, round, matchedItems } = data;
 
   const system = `你是一位资深编辑，正在采访一位作者。你的目标是帮他找到最值得写的故事和观点。
 
@@ -73,6 +84,10 @@ async function handleInterview(data: { materials: string[]; previousAnswers: str
     ? `\n\n作者提供的素材：\n${materials.join('\n---\n')}`
     : '\n\n作者没有提供素材，请从开放性问题开始。';
 
+  const matchedText = matchedItems && matchedItems.length > 0
+    ? `\n\n知识库相关书摘：\n${matchedItems.map((m) => `《${m.title}》${m.author ? ` — ${m.author}` : ''}`).join('\n')}\n\n可以引用这些书摘来提问，让采访更有深度。`
+    : '';
+
   const previousText = previousAnswers.length > 0
     ? `\n\n之前的对话：\n${previousAnswers.join('\n')}`
     : '';
@@ -80,7 +95,7 @@ async function handleInterview(data: { materials: string[]; previousAnswers: str
   const response = await chat({
     system,
     messages: [
-      { role: 'user', content: `请根据以下信息，问一个最能挖掘故事的问题。${materialsText}${previousText}` },
+      { role: 'user', content: `请根据以下信息，问一个最能挖掘故事的问题。${materialsText}${matchedText}${previousText}` },
     ],
     maxTokens: getMaxTokens('interview', ''),
     tier: 'light',
@@ -133,22 +148,29 @@ async function handleGenerateDraft(data: {
   structure: string;
   platform: string;
   stylePrompt?: string;
+  styleHandbook?: string;
 }, provider?: AIProvider) {
-  const { title, theme, materials, interviews, structure, platform, stylePrompt } = data;
+  const { theme, materials, interviews, structure, platform, stylePrompt, styleHandbook } = data;
 
-  const platformRules = platform === 'wechat'
+  const platformRules = await getPlatformPrompt(platform);
+  const platformFallback = platform === 'wechat'
     ? '公众号文章要求：1500-3000字，短段落（3-5句一段），每500字至少一个金句，结尾不要总结要留白。'
     : platform === 'xiaohongshu'
       ? '小红书文章要求：300-800字，口语化，适当emoji，结尾留互动钩子。'
       : '知乎文章要求：逻辑清晰，有论据支撑，可以适当引用数据。';
+  const effectivePlatformRules = platformRules || platformFallback;
 
   const sharedRules = await getSharedWritingRules();
+
+  const styleSection = styleHandbook
+    ? `\n参考风格手册：\n${styleHandbook}`
+    : stylePrompt ? `\n${stylePrompt}` : '';
 
   const system = `你是一位资深写作助手。根据以下信息生成一篇文章初稿。
 
 ${sharedRules}
-${platformRules}
-${stylePrompt ? `\n${stylePrompt}` : ''}
+${effectivePlatformRules}
+${styleSection}
 
 直接输出文章正文，不要加任何说明。标题用 # 标记。`;
 
@@ -241,11 +263,14 @@ async function handleRewrite(data: { content: string; instruction: string }, pro
 async function handlePolishDraft(data: { content: string; platform: string }, provider?: AIProvider) {
   const { content, platform } = data;
 
-  const platformHint = platform === 'xiaohongshu'
-    ? '这是小红书文章，保持口语化和 emoji。'
-    : platform === 'wechat'
-      ? '这是公众号文章，保持短段落和金句。'
-      : '';
+  const platformPrompt = await getPlatformPrompt(platform);
+  const platformHint = platformPrompt
+    ? `这是${platform === 'wechat' ? '公众号' : platform === 'xiaohongshu' ? '小红书' : '知乎'}文章。${platformPrompt}`
+    : platform === 'xiaohongshu'
+      ? '这是小红书文章，保持口语化和 emoji。'
+      : platform === 'wechat'
+        ? '这是公众号文章，保持短段落和金句。'
+        : '';
 
   const system = `你是一位资深编辑，专门打磨文章。请用以下 4 个视角依次审视文章，每次发现问题就修改，直到通过全部视角：
 
@@ -437,5 +462,30 @@ ${contextBlock}
     signaturePhrases: '',
     antiPatterns: '',
     summary: response.content.slice(0, 100),
+  });
+}
+
+async function handleSearchMaterials(data: { query: string; topic?: string; maxResults?: number }) {
+  const { query, topic, maxResults } = data;
+
+  const searchQuery = topic
+    ? `${query} ${topic} 相关案例 金句 数据`
+    : `${query} 相关案例 金句 数据`;
+
+  const response = await search(searchQuery, maxResults ?? 5);
+
+  if (response.results.length === 0) {
+    return NextResponse.json({
+      materials: [],
+      answer: '',
+      message: '未找到相关素材，建议手动补充',
+    });
+  }
+
+  const materials = response.results.map((r) => `${r.title}\n${r.snippet}${r.url ? `\n来源：${r.url}` : ''}`);
+
+  return NextResponse.json({
+    materials,
+    answer: response.answer ?? '',
   });
 }

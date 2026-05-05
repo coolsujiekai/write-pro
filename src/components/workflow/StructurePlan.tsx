@@ -3,14 +3,52 @@
 import { useState } from 'react';
 import type { Article } from '@/lib/workflow/types';
 import { useArticleStore } from '@/stores/article-store';
+import type { LibraryIndex } from '@/lib/library/types';
 
 interface StructurePlanProps {
   article: Article;
+  matchedItems?: LibraryIndex[];
 }
 
-export function StructurePlan({ article }: StructurePlanProps) {
-  const { setPhase, updateContent } = useArticleStore();
+export function StructurePlan({ article, matchedItems }: StructurePlanProps) {
+  const setPhase = useArticleStore((s) => s.setPhase);
+  const updateContent = useArticleStore((s) => s.updateContent);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  const applyAIStructure = async () => {
+    setIsGeneratingAI(true);
+    try {
+      const res = await fetch('/api/library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'recommend-structure',
+          theme: article.theme?.oneSentence ?? '',
+          materials: article.materials.map((m) => m.content),
+          matchedItems: matchedItems?.map((m) => ({ title: m.title, filePath: m.filePath })),
+        }),
+      });
+      if (!res.ok) throw new Error('推荐失败');
+      const data = await res.json();
+      if (data.sections?.length > 0) {
+        setSelectedTemplate('ai');
+        const theme = article.theme;
+        const sections = data.sections as { title: string; description: string }[];
+        const content = `# ${theme?.oneSentence ?? '标题'}
+
+> ${theme?.coreMessage ?? ''}
+
+${sections.map((s) => `## ${s.title}\n\n<!-- ${s.description} -->`).join('\n\n')}
+`;
+        updateContent(article.id, content);
+      }
+    } catch {
+      // Silent fail
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
 
   const applyTemplate = (template: string) => {
     setSelectedTemplate(template);
@@ -101,6 +139,7 @@ ${materials ? `### 素材\n\n${materials}\n\n` : ''}
     { key: 'story', icon: '📖', name: '故事型', desc: '场景开头 → 转折 → 深入 → 回扣开头', fit: '个人经历、感悟、叙事类文章' },
     { key: 'list', icon: '📝', name: '清单型', desc: '引言 → 三个要点 → 总结', fit: '干货分享、方法论、推荐类文章' },
     { key: 'argument', icon: '💡', name: '论述型', desc: '提出问题 → 分析原因 → 给出方案', fit: '观点输出、问题分析、建议类文章' },
+    { key: 'ai', icon: '🤖', name: 'AI 推荐', desc: '根据你的素材智能生成结构', fit: '不确定用什么结构时' },
   ];
 
   return (
@@ -130,11 +169,14 @@ ${materials ? `### 素材\n\n${materials}\n\n` : ''}
         {templateCards.map((t) => (
           <button
             key={t.key}
-            onClick={() => applyTemplate(t.key)}
-            className={`w-full text-left rounded-lg border p-4 transition-colors ${
-              selectedTemplate === t.key
-                ? 'border-[var(--primary)] bg-[var(--primary)]/5 ring-1 ring-[var(--primary)]'
-                : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--muted)]'
+            onClick={() => t.key === 'ai' ? applyAIStructure() : applyTemplate(t.key)}
+            disabled={t.key === 'ai' && isGeneratingAI}
+            className={`w-full text-left rounded-lg border p-4 transition-colors disabled:opacity-60 ${
+              t.key === 'ai'
+                ? 'border-dashed border-[var(--primary)]/40 hover:border-[var(--primary)] hover:bg-[var(--muted)]'
+                : selectedTemplate === t.key
+                  ? 'border-[var(--primary)] bg-[var(--primary)]/5 ring-1 ring-[var(--primary)]'
+                  : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--muted)]'
             }`}
           >
             <div className="flex items-center gap-2 mb-1">
@@ -142,6 +184,9 @@ ${materials ? `### 素材\n\n${materials}\n\n` : ''}
               <p className="text-sm font-medium">{t.name}</p>
               {selectedTemplate === t.key && (
                 <span className="ml-auto text-xs text-[var(--primary)]">✓ 已选</span>
+              )}
+              {t.key === 'ai' && isGeneratingAI && (
+                <span className="ml-auto text-xs text-[var(--muted-foreground)] animate-pulse">生成中...</span>
               )}
             </div>
             <p className="text-xs text-[var(--muted-foreground)]">{t.desc}</p>

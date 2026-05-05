@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { readArticle } from '@/lib/storage/article-files';
+import { z } from 'zod';
+
+const exportSchema = z.object({ id: z.string().min(1) });
 
 export async function POST(request: Request) {
   try {
-    const { id } = await request.json();
-    if (!id) {
-      return NextResponse.json({ error: '缺少文章 id' }, { status: 400 });
-    }
+    const { id } = exportSchema.parse(await request.json());
 
     const article = await readArticle(id);
     if (!article) {
@@ -21,12 +21,15 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: '缺少文章 id' }, { status: 400 });
+    }
     const message = error instanceof Error ? error.message : '导出失败';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
-function toMarkdown(article: { title: string; content: string; theme: { oneSentence: string; coreMessage: string } | null }): string {
+export function toMarkdown(article: { title: string; content: string; theme: { oneSentence: string; coreMessage: string } | null }): string {
   // HTML → 简单 Markdown 转换
   let md = article.content;
 

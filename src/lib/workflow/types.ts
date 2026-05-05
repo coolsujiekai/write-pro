@@ -1,23 +1,46 @@
 export type PhaseId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
+export interface PhaseDefinition {
+  id: PhaseId;
+  name: string;
+  description: string;
+  startMessage: string;
+  rules: string[];
+}
+
 export interface Phase {
   id: PhaseId;
   name: string;
   description: string;
 }
 
-export const PHASES: Phase[] = [
-  { id: 1, name: '投喂素材', description: '收集书摘、金句、想法' },
-  { id: 2, name: '采访深聊', description: '4轮提问，挖掘故事和观点' },
-  { id: 3, name: '主题讨论', description: '确定文章核心主题' },
-  { id: 4, name: '结构讨论', description: '规划文章逻辑骨架' },
-  { id: 5, name: '生成初稿', description: 'AI辅助生成，多角度打磨' },
-  { id: 6, name: '文件协作修改', description: '对比修改，学习风格' },
-  { id: 7, name: '定稿', description: '最终格式整理' },
-  { id: 8, name: '学习与记忆', description: '记录写作风格偏好' },
-];
+// 从 SKILL.md 派生的流程定义加载
+import phasesData from '../../../hermes-skill/writing-assistant/phases.json';
+
+export const PHASE_DEFINITIONS: PhaseDefinition[] = phasesData.phases as PhaseDefinition[];
+
+export const PHASES: Phase[] = PHASE_DEFINITIONS.map((p) => ({
+  id: p.id,
+  name: p.name,
+  description: p.description,
+}));
+
+/** 根据阶段 ID 获取完整的阶段定义（含提示文案和规则） */
+export function getPhaseDefinition(id: PhaseId): PhaseDefinition | undefined {
+  return PHASE_DEFINITIONS.find((p) => p.id === id);
+}
 
 export type Platform = 'wechat' | 'xiaohongshu' | 'zhihu';
+
+export type FeedbackRating = 'good' | 'bad';
+
+export interface FeedbackEntry {
+  id: string;
+  target: string;   // 'interview' | 'theme' | 'draft' | 'check-ai'
+  rating: FeedbackRating;
+  reason?: string;   // 👎 时的原因
+  createdAt: Date;
+}
 
 export interface Material {
   id: string;
@@ -74,6 +97,7 @@ export interface Article {
   theme: ThemeConfirmation | null;
   structure: StructurePlan | null;
   styleAnalysis: StyleAnalysisResult | null;
+  feedback: FeedbackEntry[];
   createdAt: Date;
   updatedAt: Date;
 }

@@ -17,11 +17,20 @@ const DEFAULTS: Record<AIProvider, ProviderConfig> = {
   openai: { baseUrl: 'https://api.openai.com/v1', models: { light: 'gpt-4o-mini', standard: 'gpt-4o' } },
 };
 
+export type SearchProvider = 'tavily' | 'bocha';
+
+interface SearchSettings {
+  provider: SearchProvider;
+  apiKey: string;
+}
+
 interface SettingsState {
   provider: AIProvider;
   configs: Record<AIProvider, ProviderConfig>;
+  search: SearchSettings;
   setProvider: (provider: AIProvider) => void;
   setConfig: (provider: AIProvider, config: Partial<ProviderConfig>) => void;
+  setSearch: (search: Partial<SearchSettings>) => void;
   loadFromStorage: () => void;
 }
 
@@ -45,27 +54,36 @@ function loadState(): Partial<SettingsState> {
     return {
       provider: parsed.provider ?? 'mimo',
       configs,
+      search: parsed.search ?? { provider: 'tavily' as const, apiKey: '' },
     };
   } catch {
     return {};
   }
 }
 
-function saveState(state: Pick<SettingsState, 'provider' | 'configs'>) {
+function saveState(state: Pick<SettingsState, 'provider' | 'configs' | 'search'>) {
   if (typeof window === 'undefined') return;
   localStorage.setItem('write-pro-settings', JSON.stringify({
     provider: state.provider,
     configs: state.configs,
+    search: state.search,
   }));
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   provider: 'mimo',
   configs: { ...DEFAULTS },
+  search: { provider: 'tavily', apiKey: '' },
 
   setProvider: (provider) => {
     set({ provider });
-    saveState({ provider, configs: get().configs });
+    saveState({ provider, configs: get().configs, search: get().search });
+  },
+
+  setSearch: (search) => {
+    const next = { ...get().search, ...search };
+    set({ search: next });
+    saveState({ provider: get().provider, configs: get().configs, search: next });
   },
 
   setConfig: (provider, config) => {
@@ -79,7 +97,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       },
     };
     set({ configs });
-    saveState({ provider: get().provider, configs });
+    saveState({ provider: get().provider, configs, search: get().search });
   },
 
   loadFromStorage: () => {
@@ -88,6 +106,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({
         provider: saved.provider ?? 'mimo',
         configs: saved.configs ?? { ...DEFAULTS },
+        search: saved.search ?? { provider: 'tavily', apiKey: '' },
       });
     }
   },
